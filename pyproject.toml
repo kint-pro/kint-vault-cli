@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Unified secrets management CLI — backend-agnostic wrapper for Doppler and Infisical"
 readme = "README.md"
 license = "LicenseRef-Proprietary"
-requires-python = ">=3.12"
+requires-python = ">=3.9"
 dependencies = [
     "pyyaml>=6.0",
 ]

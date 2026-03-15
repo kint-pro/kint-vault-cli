@@ -19,9 +19,7 @@ ENV_EXAMPLE = ".env.example"
 class C:
     RED = "\033[91m"
     GREEN = "\033[92m"
-    YELLOW = "\033[93m"
     BLUE = "\033[94m"
-    BOLD = "\033[1m"
     RESET = "\033[0m"
 
 
@@ -62,10 +60,13 @@ def find_config() -> Path:
     raise SystemExit(f"No {CONFIG_FILE} found. Run: kint-vault init")
 
 
-def load_config() -> dict:
+def load_config(env_override: str = None) -> dict:
     config_path = find_config()
     with open(config_path) as f:
-        return yaml.safe_load(f)
+        config = yaml.safe_load(f)
+    if env_override:
+        config["env"] = env_override
+    return config
 
 
 # --- Backend ---
@@ -199,9 +200,7 @@ def cmd_init(args):
 
 
 def cmd_pull(args):
-    config = load_config()
-    if args.env:
-        config["env"] = args.env
+    config = load_config(args.env)
     secrets = doppler_pull(config)
 
     if args.json:
@@ -218,9 +217,7 @@ def cmd_pull(args):
 
 
 def cmd_push(args):
-    config = load_config()
-    if args.env:
-        config["env"] = args.env
+    config = load_config(args.env)
     env_file = args.file or ".env"
     if not Path(env_file).exists():
         raise SystemExit(f"File not found: {env_file}")
@@ -229,16 +226,12 @@ def cmd_push(args):
 
 
 def cmd_run(args):
-    config = load_config()
-    if args.env:
-        config["env"] = args.env
+    config = load_config(args.env)
     doppler_run(config, args.command)
 
 
 def cmd_set(args):
-    config = load_config()
-    if args.env:
-        config["env"] = args.env
+    config = load_config(args.env)
     for pair in args.pairs:
         if "=" not in pair:
             raise SystemExit(f"Invalid format: {pair}. Use KEY=VALUE")
@@ -248,16 +241,12 @@ def cmd_set(args):
 
 
 def cmd_get(args):
-    config = load_config()
-    if args.env:
-        config["env"] = args.env
+    config = load_config(args.env)
     print(doppler_get(config, args.key))
 
 
 def cmd_list(args):
-    config = load_config()
-    if args.env:
-        config["env"] = args.env
+    config = load_config(args.env)
     keys = doppler_list_keys(config)
     if args.json:
         print(json.dumps(keys.splitlines(), indent=2))
@@ -266,16 +255,12 @@ def cmd_list(args):
 
 
 def cmd_diff(args):
-    config = load_config()
-    if args.env:
-        config["env"] = args.env
+    config = load_config(args.env)
     print(doppler_diff(config))
 
 
 def cmd_validate(args):
-    config = load_config()
-    if args.env:
-        config["env"] = args.env
+    config = load_config(args.env)
 
     template = args.template or ENV_EXAMPLE
     if not Path(template).exists():
@@ -305,7 +290,7 @@ def cmd_validate(args):
 
 
 def cmd_doctor(args):
-    config = load_config()
+    config = load_config(args.env)
     checks = doppler_doctor(config)
     checks.insert(0, (f"Config file ({CONFIG_FILE})", True, "doppler"))
 
