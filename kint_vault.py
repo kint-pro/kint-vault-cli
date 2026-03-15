@@ -69,6 +69,16 @@ def load_config(env_override: str = None) -> dict:
     return config
 
 
+# --- Key Name Conversion ---
+
+def _env_to_az(key: str) -> str:
+    return key.replace("_", "-").lower()
+
+
+def _az_to_env(name: str) -> str:
+    return name.replace("-", "_").upper()
+
+
 # --- Backend ---
 
 def run_cmd(cmd: list[str], capture: bool = True) -> str:
@@ -81,39 +91,92 @@ def run_cmd(cmd: list[str], capture: bool = True) -> str:
         raise SystemExit(f"Command failed: {e.stderr.strip() or e.stdout.strip()}")
 
 
-def _doppler_base(config: dict) -> list[str]:
-    return ["doppler", "-p", config["project"], "-c", config.get("env", "dev")]
+def _vault_name(config: dict) -> str:
+    env = config.get("env", "dev")
+    return f"{config['vault']}-{env}"
 
 
-def doppler_pull(config: dict) -> str:
-    return run_cmd([*_doppler_base(config), "secrets", "download", "--no-file", "--format", "env"])
+def az_pull(config: dict) -> str:
+    vault = _vault_name(config)
+    names_raw = run_cmd([
+        "az", "keyvault", "secret", "list",
+        "--vault-name", vault,
+        "--query", "[].name", "-o", "tsv",
+    ])
+    if not names_raw:
+        return ""
+    lines = []
+    for az_name in sorted(names_raw.splitlines()):
+        value = run_cmd([
+            "az", "keyvault", "secret", "show",
+            "--vault-name", vault,
+            "--name", az_name,
+            "--query", "value", "-o", "tsv",
+        ])
+        env_key = _az_to_env(az_name)
+        lines.append(f"{env_key}={value}")
+    return "\n".join(lines)
 
 
-def doppler_push(config: dict, env_file: str):
-    run_cmd([*_doppler_base(config), "secrets", "upload", env_file])
+def az_push(config: dict, env_file: str):
+    vault = _vault_name(config)
+    secrets = _parse_env(Path(env_file).read_text())
+    for key, value in secrets.items():
+        az_name = _env_to_az(key)
+        run_cmd([
+            "az", "keyvault", "secret", "set",
+            "--vault-name", vault,
+            "--name", az_name,
+            "--value", value,
+            "--output", "none",
+        ])
 
 
-def doppler_run(config: dict, command: list[str]):
-    result = subprocess.run([*_doppler_base(config), "run", "--"] + command)
+def az_run(config: dict, command: list[str]):
+    secrets_str = az_pull(config)
+    env = os.environ.copy()
+    env.update(_parse_env(secrets_str))
+    result = subprocess.run(command, env=env)
     raise SystemExit(result.returncode)
 
 
-def doppler_set(config: dict, key: str, value: str):
-    run_cmd([*_doppler_base(config), "secrets", "set", f"{key}={value}"])
+def az_set(config: dict, key: str, value: str):
+    vault = _vault_name(config)
+    az_name = _env_to_az(key)
+    run_cmd([
+        "az", "keyvault", "secret", "set",
+        "--vault-name", vault,
+        "--name", az_name,
+        "--value", value,
+        "--output", "none",
+    ])
 
 
-def doppler_get(config: dict, key: str) -> str:
-    return run_cmd([*_doppler_base(config), "secrets", "get", key, "--plain"])
+def az_get(config: dict, key: str) -> str:
+    vault = _vault_name(config)
+    az_name = _env_to_az(key)
+    return run_cmd([
+        "az", "keyvault", "secret", "show",
+        "--vault-name", vault,
+        "--name", az_name,
+        "--query", "value", "-o", "tsv",
+    ])
 
 
-def doppler_list_keys(config: dict) -> str:
-    raw = run_cmd([*_doppler_base(config), "secrets", "--json"])
-    secrets = json.loads(raw)
-    return "\n".join(sorted(secrets.keys()))
+def az_list_keys(config: dict) -> str:
+    vault = _vault_name(config)
+    names_raw = run_cmd([
+        "az", "keyvault", "secret", "list",
+        "--vault-name", vault,
+        "--query", "[].name", "-o", "tsv",
+    ])
+    if not names_raw:
+        return ""
+    return "\n".join(sorted(_az_to_env(n) for n in names_raw.splitlines()))
 
 
-def doppler_diff(config: dict) -> str:
-    remote = doppler_pull(config)
+def az_diff(config: dict) -> str:
+    remote = az_pull(config)
     local_path = Path(".env")
     if not local_path.exists():
         return "No local .env file to diff against"
@@ -122,24 +185,39 @@ def doppler_diff(config: dict) -> str:
     return _format_diff(local_dict, remote_dict)
 
 
-def doppler_doctor(config: dict) -> list[tuple[str, bool, str]]:
+def az_doctor(config: dict) -> list[tuple[str, bool, str]]:
     checks = []
     try:
-        run_cmd(["doppler", "--version"])
-        checks.append(("Doppler CLI installed", True, ""))
+        run_cmd(["az", "version"])
+        checks.append(("Azure CLI installed", True, ""))
     except SystemExit:
-        checks.append(("Doppler CLI installed", False, "Install: brew install dopplerhq/cli/doppler"))
+        checks.append(("Azure CLI installed", False, "Install: brew install azure-cli"))
         return checks
     try:
-        run_cmd(["doppler", "configure", "get", "token", "--plain"])
+        run_cmd(["az", "account", "show"])
         checks.append(("Authenticated", True, ""))
     except SystemExit:
-        checks.append(("Authenticated", False, "Run: doppler login"))
+        checks.append(("Authenticated", False, "Run: az login"))
+        return checks
+    vault = _vault_name(config)
     try:
-        run_cmd([*_doppler_base(config), "secrets", "--only-names"])
-        checks.append(("Project accessible", True, f"{config['project']}/{config.get('env', 'dev')}"))
+        vault_info = run_cmd([
+            "az", "keyvault", "show",
+            "--name", vault,
+            "--query", "properties.enableRbacAuthorization", "-o", "tsv",
+        ])
+        if vault_info.lower() == "true":
+            checks.append(("RBAC enabled", True, vault))
+        else:
+            checks.append(("RBAC enabled", False, f"Run: az keyvault update --name {vault} --enable-rbac-authorization true"))
     except SystemExit:
-        checks.append(("Project accessible", False, f"Check project '{config['project']}' config '{config.get('env', 'dev')}'"))
+        checks.append(("Vault exists", False, f"Vault '{vault}' not found"))
+        return checks
+    try:
+        run_cmd(["az", "keyvault", "secret", "list", "--vault-name", vault, "--maxresults", "1"])
+        checks.append(("Secrets readable", True, ""))
+    except SystemExit:
+        checks.append(("Secrets readable", False, "Need role: Key Vault Secrets User or Officer"))
     return checks
 
 
@@ -178,10 +256,10 @@ def cmd_init(args):
     if config_path.exists() and not args.force:
         raise SystemExit(f"{CONFIG_FILE} already exists. Use --force to overwrite")
 
-    project = args.project or _prompt("Project name")
+    vault = args.vault or _prompt("Vault name prefix (e.g. kv-myapp)")
     env = args.env or _prompt("Default environment", "dev")
 
-    config = {"backend": "doppler", "project": project, "env": env}
+    config = {"backend": "azure", "vault": vault, "env": env}
     with open(config_path, "w") as f:
         yaml.dump(config, f, default_flow_style=False)
 
@@ -196,12 +274,12 @@ def cmd_init(args):
         gitignore.write_text(".env\n")
         info("Created .gitignore with .env")
 
-    ok(f"Initialized (doppler/{project}/{env})")
+    ok(f"Initialized (azure/{vault}-{env})")
 
 
 def cmd_pull(args):
     config = load_config(args.env)
-    secrets = doppler_pull(config)
+    secrets = az_pull(config)
 
     if args.json:
         print(json.dumps(_parse_env(secrets), indent=2))
@@ -221,13 +299,14 @@ def cmd_push(args):
     env_file = args.file or ".env"
     if not Path(env_file).exists():
         raise SystemExit(f"File not found: {env_file}")
-    doppler_push(config, env_file)
-    ok(f"Pushed {env_file} → doppler")
+    az_push(config, env_file)
+    count = len(_parse_env(Path(env_file).read_text()))
+    ok(f"Pushed {count} secrets → {_vault_name(config)}")
 
 
 def cmd_run(args):
     config = load_config(args.env)
-    doppler_run(config, args.command)
+    az_run(config, args.command)
 
 
 def cmd_set(args):
@@ -236,18 +315,18 @@ def cmd_set(args):
         if "=" not in pair:
             raise SystemExit(f"Invalid format: {pair}. Use KEY=VALUE")
         key, value = pair.split("=", 1)
-        doppler_set(config, key, value)
+        az_set(config, key, value)
         ok(f"Set {key}")
 
 
 def cmd_get(args):
     config = load_config(args.env)
-    print(doppler_get(config, args.key))
+    print(az_get(config, args.key))
 
 
 def cmd_list(args):
     config = load_config(args.env)
-    keys = doppler_list_keys(config)
+    keys = az_list_keys(config)
     if args.json:
         print(json.dumps(keys.splitlines(), indent=2))
     else:
@@ -256,7 +335,7 @@ def cmd_list(args):
 
 def cmd_diff(args):
     config = load_config(args.env)
-    print(doppler_diff(config))
+    print(az_diff(config))
 
 
 def cmd_validate(args):
@@ -267,7 +346,7 @@ def cmd_validate(args):
         raise SystemExit(f"Template not found: {template}. Create a {ENV_EXAMPLE} with required keys")
 
     required = set(_parse_env(Path(template).read_text()).keys())
-    remote_keys = set(_parse_env(doppler_pull(config)).keys())
+    remote_keys = set(_parse_env(az_pull(config)).keys())
 
     missing = sorted(required - remote_keys)
     extra = sorted(remote_keys - required) if args.strict else []
@@ -291,8 +370,8 @@ def cmd_validate(args):
 
 def cmd_doctor(args):
     config = load_config(args.env)
-    checks = doppler_doctor(config)
-    checks.insert(0, (f"Config file ({CONFIG_FILE})", True, "doppler"))
+    checks = az_doctor(config)
+    checks.insert(0, (f"Config file ({CONFIG_FILE})", True, "azure"))
 
     all_ok = True
     for name, passed, detail in checks:
@@ -338,7 +417,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", metavar="<command>")
 
     p = sub.add_parser("init", help="Initialize project config")
-    p.add_argument("--project")
+    p.add_argument("--vault")
     p.add_argument("--env", default=None)
     p.add_argument("--force", action="store_true")
 
