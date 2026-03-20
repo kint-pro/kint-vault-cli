@@ -733,6 +733,15 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+ALIAS_HINT = """
+Tip: Create a short alias "kv" for kint-vault:
+
+  macOS/Linux (zsh):  echo 'alias kv="kint-vault"' >> ~/.zshrc && source ~/.zshrc
+  macOS/Linux (bash): echo 'alias kv="kint-vault"' >> ~/.bashrc && source ~/.bashrc
+  Windows (PS):       Set-Alias -Name kv -Value kint-vault -Scope Global
+"""
+
+
 COMMANDS = {
     "init": cmd_init,
     "pull": cmd_pull,
@@ -759,6 +768,7 @@ def main():
 
     if not args.command:
         parser.print_help()
+        print(ALIAS_HINT)
         raise SystemExit(1)
 
     COMMANDS[args.command](args)
