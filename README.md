@@ -7,13 +7,12 @@ Stop copying `.env` files manually. `kint-vault` encrypts secrets directly in yo
 ## Quick Start
 
 ```bash
+pipx install git+https://github.com/kint-pro/kint-vault-cli.git
 cd your-project
-kint-vault init                  # generate age key, create config
-echo "API_KEY=sk-123" > .env     # create your secrets
-kint-vault push -y               # encrypt .env → .env.dev.enc
-rm .env                          # delete plaintext
-kint-vault pull                  # decrypt .env.dev.enc → .env
+kint-vault pull                  # decrypt secrets → .env
 ```
+
+That's it. If this is a new project, see [Setup a project](#setup-a-project) below.
 
 ## Prerequisites
 
