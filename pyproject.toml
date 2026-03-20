@@ -1,13 +1,16 @@
 [project]
 name = "kint-vault-cli"
 version = "0.1.0"
-description = "Unified secrets management CLI — backend-agnostic wrapper for Doppler and Infisical"
+description = "Unified secrets management CLI powered by SOPS + age"
 readme = "README.md"
 license = "LicenseRef-Proprietary"
 requires-python = ">=3.9"
 dependencies = [
     "pyyaml>=6.0",
 ]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "hypothesis>=6.0"]
 
 [project.scripts]
 kint-vault = "kint_vault:main"
