@@ -183,18 +183,23 @@ def _find_all_enc_files() -> list[Path]:
 
 
 def _find_all_env_files(root: Path) -> list[Path]:
-    return sorted(
-        p for p in root.rglob(".env")
-        if not any(part.startswith(".") or part in ("node_modules", "__pycache__", ".venv", "venv") for part in p.relative_to(root).parts[:-1])
+    return sorted(p for p in root.rglob(".env") if not _is_excluded_path(p, root))
+
+
+def _is_excluded_path(path: Path, root: Path) -> bool:
+    return any(
+        part.startswith(".") or part in ("node_modules", "__pycache__", ".venv", "venv")
+        for part in path.relative_to(root).parts[:-1]
     )
 
 
 def _find_all_enc_files_recursive(root: Path, env: str) -> list[Path]:
     pattern = f".env.{env}.enc"
-    return sorted(
-        p for p in root.rglob(pattern)
-        if not any(part.startswith(".") or part in ("node_modules", "__pycache__", ".venv", "venv") for part in p.relative_to(root).parts[:-1])
-    )
+    return sorted(p for p in root.rglob(pattern) if not _is_excluded_path(p, root))
+
+
+def _find_all_enc_files_any_env(root: Path) -> list[Path]:
+    return sorted(p for p in root.rglob(".env.*.enc") if not _is_excluded_path(p, root))
 
 
 def _in_dir(directory: Path, func, *args, **kwargs):
@@ -461,7 +466,8 @@ def cmd_push(args):
             raise SystemExit("No .env files found")
         info(f"Found {len(env_files)} .env file(s):")
         for f in env_files:
-            print(f"  {f.relative_to(root)}")
+            count = len(_parse_env(f.read_text()))
+            print(f"  {f.relative_to(root)} ({count} secrets)")
         if not args.yes:
             answer = input("Encrypt all? [y/N] ").strip().lower()
             if answer != "y":
@@ -607,7 +613,7 @@ def cmd_rotate(args):
         if not enc_files:
             raise SystemExit(f"No .env.{env_name}.enc files found")
         for enc in enc_files:
-            run_cmd(["sops", "rotate", "--input-type", "dotenv", "--output-type", "dotenv", "-i", str(enc)])
+            _in_dir(enc.parent, run_cmd, ["sops", "rotate", "--input-type", "dotenv", "--output-type", "dotenv", "-i", enc.name])
             ok(f"Rotated data key for {enc.relative_to(root)}")
         return
     enc = _enc_file(config)
@@ -638,9 +644,9 @@ def cmd_add_recipient(args):
     ok(f"Added recipient: {pubkey[:20]}...")
 
     root = find_config().parent
-    for pattern in Path(root).rglob(".env.*.enc"):
-        run_cmd(["sops", "updatekeys", "--input-type", "dotenv", "-y", str(pattern)])
-        ok(f"Updated keys in {pattern.relative_to(root)}")
+    for enc in _find_all_enc_files_any_env(root):
+        _in_dir(enc.parent, run_cmd, ["sops", "updatekeys", "--input-type", "dotenv", "-y", enc.name])
+        ok(f"Updated keys in {enc.relative_to(root)}")
 
 
 def cmd_remove_recipient(args):
@@ -666,9 +672,9 @@ def cmd_remove_recipient(args):
     ok(f"Removed recipient: {pubkey[:20]}...")
 
     root = find_config().parent
-    for enc in Path(root).rglob(".env.*.enc"):
-        run_cmd(["sops", "updatekeys", "--input-type", "dotenv", "-y", str(enc)])
-        run_cmd(["sops", "rotate", "--input-type", "dotenv", "--output-type", "dotenv", "-i", str(enc)])
+    for enc in _find_all_enc_files_any_env(root):
+        _in_dir(enc.parent, run_cmd, ["sops", "updatekeys", "--input-type", "dotenv", "-y", enc.name])
+        _in_dir(enc.parent, run_cmd, ["sops", "rotate", "--input-type", "dotenv", "--output-type", "dotenv", "-i", enc.name])
         ok(f"Updated keys and rotated data key in {enc.relative_to(root)}")
     info("Removed recipients can still decrypt old versions from git history")
 
