@@ -592,7 +592,7 @@ def cmd_doctor(args):
     checks.append((f"Config file ({CONFIG_FILE})", True, "sops"))
 
     try:
-        sops_version = run_cmd(["sops", "--version"])
+        sops_version = run_cmd(["sops", "--version", "--disable-version-check"])
         checks.append(("sops installed", True, sops_version))
     except SystemExit:
         checks.append(("sops installed", False, _install_hint("sops")))
