@@ -197,6 +197,15 @@ def _find_all_enc_files_recursive(root: Path, env: str) -> list[Path]:
     )
 
 
+def _in_dir(directory: Path, func, *args, **kwargs):
+    original = Path.cwd()
+    os.chdir(directory)
+    try:
+        return func(*args, **kwargs)
+    finally:
+        os.chdir(original)
+
+
 def _format_diff(local: dict, remote: dict) -> str:
     lines = []
     all_keys = sorted(set(local) | set(remote))
@@ -370,12 +379,7 @@ def cmd_init(args):
 
 
 def _pull_single(config: dict, enc_path: Path, output_path: Path, force: bool):
-    original_cwd = Path.cwd()
-    os.chdir(enc_path.parent)
-    try:
-        content = sops_decrypt(config)
-    finally:
-        os.chdir(original_cwd)
+    content = _in_dir(enc_path.parent, sops_decrypt, config)
     data = (content + "\n").encode()
     resolved = output_path.resolve()
     if force:
@@ -425,11 +429,12 @@ def cmd_pull(args):
 
 
 def _push_single(config: dict, env_file: str, yes: bool):
-    if not Path(env_file).exists():
+    env_path = Path(env_file)
+    if not env_path.exists():
         raise SystemExit(f"File not found: {env_file}. Create a .env file with your secrets first.")
-    secrets = _parse_env(Path(env_file).read_text())
+    secrets = _parse_env(env_path.read_text())
     enc_name = _enc_file(config)
-    enc_path = Path(env_file).parent / enc_name
+    enc_path = env_path.parent / enc_name
     is_new = not enc_path.exists()
     if not yes:
         if is_new:
@@ -440,12 +445,7 @@ def _push_single(config: dict, env_file: str, yes: bool):
         answer = input("Continue? [y/N] ").strip().lower()
         if answer != "y":
             raise SystemExit("Aborted")
-    original_cwd = Path.cwd()
-    os.chdir(Path(env_file).parent)
-    try:
-        sops_encrypt_file(config, ".env")
-    finally:
-        os.chdir(original_cwd)
+    _in_dir(env_path.parent, sops_encrypt_file, config, ".env")
     if is_new:
         ok(f"Created {enc_path} with {len(secrets)} secrets")
     else:
@@ -530,6 +530,25 @@ def cmd_delete(args):
 
 def cmd_list(args):
     config = load_config(args.env)
+    if args.all:
+        root = find_config().parent
+        env_name = config.get("env", "dev")
+        enc_files = _find_all_enc_files_recursive(root, env_name)
+        if not enc_files:
+            raise SystemExit(f"No .env.{env_name}.enc files found")
+        result = {}
+        for enc in enc_files:
+            label = str(enc.parent.relative_to(root))
+            keys = sorted(_parse_env(_in_dir(enc.parent, sops_decrypt, config)).keys())
+            result[label] = keys
+        if args.json:
+            print(json.dumps(result, indent=2))
+        else:
+            for label, keys in result.items():
+                info(f"{label} ({len(keys)} keys):")
+                for k in keys:
+                    print(f"  {k}")
+        return
     keys = sorted(_parse_env(sops_decrypt(config)).keys())
     if args.json:
         print(json.dumps(keys, indent=2))
@@ -539,6 +558,27 @@ def cmd_list(args):
 
 def cmd_diff(args):
     config = load_config(args.env)
+    if args.all:
+        root = find_config().parent
+        env_name = config.get("env", "dev")
+        enc_files = _find_all_enc_files_recursive(root, env_name)
+        if not enc_files:
+            raise SystemExit(f"No .env.{env_name}.enc files found")
+        for enc in enc_files:
+            local = enc.parent / ".env"
+            label = str(enc.parent.relative_to(root))
+            if not local.exists():
+                info(f"{label}: no local .env")
+                continue
+            local_dict = _parse_env(local.read_text())
+            remote_dict = _parse_env(_in_dir(enc.parent, sops_decrypt, config))
+            result = _format_diff(local_dict, remote_dict)
+            if result == "No differences":
+                ok(f"{label}: no differences")
+            else:
+                info(f"{label}:")
+                print(result)
+        return
     local_path = Path(".env")
     if not local_path.exists():
         raise SystemExit("No local .env file to diff against")
@@ -560,6 +600,16 @@ def cmd_edit(args):
 
 def cmd_rotate(args):
     config = load_config(args.env)
+    if args.all:
+        root = find_config().parent
+        env_name = config.get("env", "dev")
+        enc_files = _find_all_enc_files_recursive(root, env_name)
+        if not enc_files:
+            raise SystemExit(f"No .env.{env_name}.enc files found")
+        for enc in enc_files:
+            run_cmd(["sops", "rotate", "--input-type", "dotenv", "--output-type", "dotenv", "-i", str(enc)])
+            ok(f"Rotated data key for {enc.relative_to(root)}")
+        return
     enc = _enc_file(config)
     if not Path(enc).exists():
         raise SystemExit(f"No encrypted secrets: {enc}")
@@ -587,9 +637,10 @@ def cmd_add_recipient(args):
     _save_sops_config(sops)
     ok(f"Added recipient: {pubkey[:20]}...")
 
-    for enc in _find_all_enc_files():
-        run_cmd(["sops", "updatekeys", "--input-type", "dotenv", "-y", str(enc)])
-        ok(f"Updated keys in {enc.name}")
+    root = find_config().parent
+    for pattern in Path(root).rglob(".env.*.enc"):
+        run_cmd(["sops", "updatekeys", "--input-type", "dotenv", "-y", str(pattern)])
+        ok(f"Updated keys in {pattern.relative_to(root)}")
 
 
 def cmd_remove_recipient(args):
@@ -614,40 +665,60 @@ def cmd_remove_recipient(args):
     _save_sops_config(sops)
     ok(f"Removed recipient: {pubkey[:20]}...")
 
-    for enc in _find_all_enc_files():
+    root = find_config().parent
+    for enc in Path(root).rglob(".env.*.enc"):
         run_cmd(["sops", "updatekeys", "--input-type", "dotenv", "-y", str(enc)])
         run_cmd(["sops", "rotate", "--input-type", "dotenv", "--output-type", "dotenv", "-i", str(enc)])
-        ok(f"Updated keys and rotated data key in {enc.name}")
+        ok(f"Updated keys and rotated data key in {enc.relative_to(root)}")
     info("Removed recipients can still decrypt old versions from git history")
+
+
+def _validate_single(config: dict, enc_dir: Path, template_path: Path, strict: bool, label: str) -> bool:
+    required = set(_parse_env(template_path.read_text()).keys())
+    remote_keys = set(_parse_env(_in_dir(enc_dir, sops_decrypt, config)).keys())
+    missing = sorted(required - remote_keys)
+    extra = sorted(remote_keys - required) if strict else []
+    if not missing and not extra:
+        ok(f"{label}: all {len(required)} keys present")
+        return True
+    if missing:
+        err(f"{label}: missing {len(missing)} keys:")
+        for k in missing:
+            print(f"  - {k}")
+    if extra:
+        info(f"{label}: extra {len(extra)} keys:")
+        for k in extra:
+            print(f"  + {k}")
+    return False
 
 
 def cmd_validate(args):
     config = load_config(args.env)
 
+    if args.all:
+        root = find_config().parent
+        env_name = config.get("env", "dev")
+        enc_files = _find_all_enc_files_recursive(root, env_name)
+        if not enc_files:
+            raise SystemExit(f"No .env.{env_name}.enc files found")
+        all_ok = True
+        for enc in enc_files:
+            template = enc.parent / (args.template or ENV_EXAMPLE)
+            label = str(enc.parent.relative_to(root))
+            if not template.exists():
+                info(f"{label}: no {template.name}, skipping")
+                continue
+            if not _validate_single(config, enc.parent, template, args.strict, label):
+                all_ok = False
+        if not all_ok:
+            raise SystemExit(1)
+        return
+
     template = args.template or ENV_EXAMPLE
     if not Path(template).exists():
         raise SystemExit(f"Template not found: {template}. Create a {ENV_EXAMPLE} with required keys")
 
-    required = set(_parse_env(Path(template).read_text()).keys())
-    remote_keys = set(_parse_env(sops_decrypt(config)).keys())
-
-    missing = sorted(required - remote_keys)
-    extra = sorted(remote_keys - required) if args.strict else []
-
-    if not missing and not extra:
-        ok(f"All {len(required)} keys present")
-        return
-
-    if missing:
-        err(f"Missing {len(missing)} keys:")
-        for k in missing:
-            print(f"  - {k}")
-    if extra:
-        info(f"Extra {len(extra)} keys (not in template):")
-        for k in extra:
-            print(f"  + {k}")
-
-    if missing or extra:
+    if not _validate_single(config, Path.cwd(), Path(template), args.strict, _enc_file(config)):
         raise SystemExit(1)
 
 
@@ -770,28 +841,30 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("list", help="List secret keys")
     p.add_argument("--env")
     p.add_argument("--json", action="store_true")
+    p.add_argument("--all", action="store_true", help="List keys for all services in monorepo")
 
     p = sub.add_parser("diff", help="Show local vs encrypted differences")
     p.add_argument("--env")
+    p.add_argument("--all", action="store_true", help="Diff all services in monorepo")
 
     p = sub.add_parser("edit", help="Edit encrypted secrets in $EDITOR")
     p.add_argument("--env")
 
     p = sub.add_parser("rotate", help="Rotate data encryption key")
     p.add_argument("--env")
+    p.add_argument("--all", action="store_true", help="Rotate all services in monorepo")
 
     p = sub.add_parser("add-recipient", help="Add age public key to recipients")
-    p.add_argument("--env")
     p.add_argument("key", metavar="AGE_PUBLIC_KEY")
 
     p = sub.add_parser("remove-recipient", help="Remove age public key from recipients")
-    p.add_argument("--env")
     p.add_argument("key", metavar="AGE_PUBLIC_KEY")
 
     p = sub.add_parser("validate", help="Validate secrets against template")
     p.add_argument("--env")
     p.add_argument("--template", "-t", help=f"Template file (default: {ENV_EXAMPLE})")
     p.add_argument("--strict", action="store_true", help="Fail on extra keys too")
+    p.add_argument("--all", action="store_true", help="Validate all services in monorepo")
 
     p = sub.add_parser("doctor", help="Check setup and connectivity")
     p.add_argument("--env")
