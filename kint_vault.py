@@ -351,6 +351,7 @@ def cmd_init(args):
     ok(f"Initialized (sops+age, env: {env})")
     info(f"Your public key: {pubkey}")
     info("Share this key with your team to be added as recipient")
+    print(ALIAS_HINT)
 
 
 def cmd_pull(args):
@@ -768,7 +769,6 @@ def main():
 
     if not args.command:
         parser.print_help()
-        print(ALIAS_HINT)
         raise SystemExit(1)
 
     COMMANDS[args.command](args)
