@@ -182,6 +182,21 @@ def _find_all_enc_files() -> list[Path]:
     return sorted(Path.cwd().glob(".env.*.enc"))
 
 
+def _find_all_env_files(root: Path) -> list[Path]:
+    return sorted(
+        p for p in root.rglob(".env")
+        if not any(part.startswith(".") or part in ("node_modules", "__pycache__", ".venv", "venv") for part in p.relative_to(root).parts[:-1])
+    )
+
+
+def _find_all_enc_files_recursive(root: Path, env: str) -> list[Path]:
+    pattern = f".env.{env}.enc"
+    return sorted(
+        p for p in root.rglob(pattern)
+        if not any(part.startswith(".") or part in ("node_modules", "__pycache__", ".venv", "venv") for part in p.relative_to(root).parts[:-1])
+    )
+
+
 def _format_diff(local: dict, remote: dict) -> str:
     lines = []
     all_keys = sorted(set(local) | set(remote))
@@ -354,57 +369,108 @@ def cmd_init(args):
     print(ALIAS_HINT)
 
 
-def cmd_pull(args):
-    config = load_config(args.env)
-    content = sops_decrypt(config)
-
-    if args.json:
-        print(json.dumps(_parse_env(content), indent=2))
-        return
-
-    if args.stdout:
-        print(content)
-        return
-
-    output = args.output or ".env"
-    output_path = Path(output).resolve()
+def _pull_single(config: dict, enc_path: Path, output_path: Path, force: bool):
+    original_cwd = Path.cwd()
+    os.chdir(enc_path.parent)
+    try:
+        content = sops_decrypt(config)
+    finally:
+        os.chdir(original_cwd)
     data = (content + "\n").encode()
-    if args.force:
-        fd = os.open(output_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    resolved = output_path.resolve()
+    if force:
+        fd = os.open(resolved, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     else:
         try:
-            fd = os.open(output_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            fd = os.open(resolved, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         except FileExistsError:
-            raise SystemExit(f"{output} already exists. Use --force to overwrite")
+            raise SystemExit(f"{output_path} already exists. Use --force to overwrite")
     try:
         os.write(fd, data)
     finally:
         os.close(fd)
-    ok(f"Decrypted {len(_parse_env(content))} secrets → {output}")
+    ok(f"Decrypted {len(_parse_env(content))} secrets → {output_path}")
 
 
-def cmd_push(args):
+def cmd_pull(args):
     config = load_config(args.env)
-    env_file = args.file or ".env"
+
+    if args.all:
+        root = find_config().parent
+        env_name = config.get("env", "dev")
+        enc_files = _find_all_enc_files_recursive(root, env_name)
+        if not enc_files:
+            raise SystemExit(f"No .env.{env_name}.enc files found")
+        info(f"Found {len(enc_files)} encrypted file(s):")
+        for f in enc_files:
+            print(f"  {f.relative_to(root)}")
+        for enc in enc_files:
+            output = enc.parent / ".env"
+            _pull_single(config, enc, output, args.force)
+        return
+
+    if args.json:
+        content = sops_decrypt(config)
+        print(json.dumps(_parse_env(content), indent=2))
+        return
+
+    if args.stdout:
+        content = sops_decrypt(config)
+        print(content)
+        return
+
+    enc = Path(_enc_file(config))
+    output = Path(args.output or ".env")
+    _pull_single(config, enc, output, args.force)
+
+
+def _push_single(config: dict, env_file: str, yes: bool):
     if not Path(env_file).exists():
         raise SystemExit(f"File not found: {env_file}. Create a .env file with your secrets first.")
     secrets = _parse_env(Path(env_file).read_text())
-    enc = _enc_file(config)
-    is_new = not Path(enc).exists()
-    if not args.yes:
+    enc_name = _enc_file(config)
+    enc_path = Path(env_file).parent / enc_name
+    is_new = not enc_path.exists()
+    if not yes:
         if is_new:
             info(f"Creating new environment: {config.get('env', 'dev')}")
-        info(f"Will encrypt {len(secrets)} secrets → {enc}:")
+        info(f"Will encrypt {len(secrets)} secrets → {enc_path}:")
         for key in sorted(secrets):
             print(f"  {key}")
         answer = input("Continue? [y/N] ").strip().lower()
         if answer != "y":
             raise SystemExit("Aborted")
-    sops_encrypt_file(config, env_file)
+    original_cwd = Path.cwd()
+    os.chdir(Path(env_file).parent)
+    try:
+        sops_encrypt_file(config, ".env")
+    finally:
+        os.chdir(original_cwd)
     if is_new:
-        ok(f"Created {enc} with {len(secrets)} secrets")
+        ok(f"Created {enc_path} with {len(secrets)} secrets")
     else:
-        ok(f"Encrypted {len(secrets)} secrets → {enc}")
+        ok(f"Encrypted {len(secrets)} secrets → {enc_path}")
+
+
+def cmd_push(args):
+    config = load_config(args.env)
+    if args.all:
+        root = find_config().parent
+        env_files = _find_all_env_files(root)
+        if not env_files:
+            raise SystemExit("No .env files found")
+        info(f"Found {len(env_files)} .env file(s):")
+        for f in env_files:
+            print(f"  {f.relative_to(root)}")
+        if not args.yes:
+            answer = input("Encrypt all? [y/N] ").strip().lower()
+            if answer != "y":
+                raise SystemExit("Aborted")
+        for f in env_files:
+            _push_single(config, str(f), yes=True)
+        return
+    env_file = args.file or ".env"
+    _push_single(config, env_file, args.yes)
 
 
 def cmd_run(args):
@@ -676,11 +742,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true", help="Output as JSON")
     p.add_argument("--stdout", action="store_true", help="Print to stdout only")
     p.add_argument("--force", action="store_true", help="Overwrite existing .env file")
+    p.add_argument("--all", action="store_true", help="Decrypt all services in monorepo")
 
     p = sub.add_parser("push", help="Encrypt .env to vault")
     p.add_argument("--env")
     p.add_argument("--file", "-f", default=None, help="File to encrypt (default: .env)")
     p.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
+    p.add_argument("--all", action="store_true", help="Encrypt all .env files in monorepo")
 
     p = sub.add_parser("run", help="Run command with injected secrets")
     p.add_argument("--env")

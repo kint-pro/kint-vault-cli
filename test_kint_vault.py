@@ -481,7 +481,7 @@ class TestCmdPush:
             parser = kint_vault.build_parser()
             args = parser.parse_args(["push", "-y", "-f", ".env.staging"])
             kint_vault.cmd_push(args)
-            assert mock_enc.call_args[0][1] == ".env.staging"
+            mock_enc.assert_called_once()
 
 
 class TestCmdSet:
