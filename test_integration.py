@@ -589,6 +589,97 @@ class TestMonorepo:
         assert "API_KEY=api-secret" in (monorepo / "services/api/.env").read_text()
 
 
+class TestMonorepoEdgeCases:
+    """Edge cases: files that look like .env but shouldn't be matched."""
+
+    @pytest.fixture()
+    def monorepo_messy(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+
+        out, err, code = kv("init", "--env", "dev", input_text="dev")
+        assert code == 0
+
+        # real service
+        (tmp_path / "services/api").mkdir(parents=True)
+        (tmp_path / "services/api/.env").write_text("REAL=secret\n")
+
+        # decoy files that should NOT be picked up
+        (tmp_path / "services/api/.env.local").write_text("LOCAL=nope\n")
+        (tmp_path / "services/api/.env.backup").write_text("BACKUP=nope\n")
+        (tmp_path / "services/api/.env-old").write_text("OLD=nope\n")
+        (tmp_path / "services/api/prefix.env").write_text("PREFIX=nope\n")
+
+        # excluded directories that should be skipped
+        (tmp_path / "node_modules/lib").mkdir(parents=True)
+        (tmp_path / "node_modules/lib/.env").write_text("NM=nope\n")
+        (tmp_path / ".venv/bin").mkdir(parents=True)
+        (tmp_path / ".venv/bin/.env").write_text("VENV=nope\n")
+        (tmp_path / "__pycache__").mkdir(parents=True)
+        (tmp_path / "__pycache__/.env").write_text("CACHE=nope\n")
+
+        return tmp_path
+
+    def test_push_all_only_matches_dotenv(self, monorepo_messy):
+        """push --all should only encrypt exact .env files, not .env.local etc."""
+        out, err, code = kv("push", "--all", "-y")
+        assert code == 0
+        # only services/api/.env should be encrypted
+        assert (monorepo_messy / "services/api/.env.dev.enc").exists()
+        # root should NOT have an .enc file (no root .env)
+        assert not (monorepo_messy / ".env.dev.enc").exists()
+
+    def test_push_all_excludes_node_modules(self, monorepo_messy):
+        """push --all should skip .env files in node_modules."""
+        kv("push", "--all", "-y")
+        assert not (monorepo_messy / "node_modules/lib/.env.dev.enc").exists()
+
+    def test_push_all_excludes_venv(self, monorepo_messy):
+        """push --all should skip .env files in .venv."""
+        kv("push", "--all", "-y")
+        assert not (monorepo_messy / ".venv/bin/.env.dev.enc").exists()
+
+    def test_push_all_excludes_pycache(self, monorepo_messy):
+        """push --all should skip .env files in __pycache__."""
+        kv("push", "--all", "-y")
+        assert not (monorepo_messy / "__pycache__/.env.dev.enc").exists()
+
+    def test_pull_all_only_matches_enc(self, monorepo_messy):
+        """pull --all should only decrypt .env.dev.enc files."""
+        kv("push", "--all", "-y")
+        # remove .env so pull works
+        (monorepo_messy / "services/api/.env").unlink()
+        # create a decoy .enc file
+        (monorepo_messy / "services/api/.env.backup.enc").write_text("decoy")
+        out, err, code = kv("pull", "--all")
+        assert code == 0
+        env = (monorepo_messy / "services/api/.env").read_text()
+        assert "REAL=secret" in env
+
+    def test_diff_all_ignores_services_without_env(self, monorepo_messy):
+        """diff --all should gracefully skip services with no local .env."""
+        kv("push", "--all", "-y")
+        (monorepo_messy / "services/api/.env").unlink()
+        out, err, code = kv("diff", "--all")
+        assert code == 0
+        assert "no local .env" in out
+
+    def test_list_all_count(self, monorepo_messy):
+        """list --all should only show keys from real .env files."""
+        kv("push", "--all", "-y")
+        out, err, code = kv("list", "--all", "--json")
+        assert code == 0
+        data = json.loads(out)
+        # only one service should appear
+        assert len(data) == 1
+        all_keys = [k for keys in data.values() for k in keys]
+        assert "REAL" in all_keys
+        # decoys should NOT appear
+        assert "LOCAL" not in all_keys
+        assert "BACKUP" not in all_keys
+        assert "NM" not in all_keys
+        assert "VENV" not in all_keys
+
+
 class TestEdgeCI:
     def test_all_commands_with_sops_age_key(self, project):
         """Simulate CI: use SOPS_AGE_KEY env var instead of key file."""
