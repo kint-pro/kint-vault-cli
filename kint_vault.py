@@ -121,9 +121,10 @@ def _age_key_file() -> Path:
 
 
 def _read_age_pubkey(key_file: Path) -> str:
+    prefix = "# public key: "
     for line in key_file.read_text().splitlines():
-        if line.startswith("# public key:"):
-            return line.split(":", 1)[1].strip()
+        if line.startswith(prefix):
+            return line[len(prefix):].strip()
     raise SystemExit(f"No public key found in {key_file}")
 
 
@@ -201,13 +202,11 @@ def _find_all_enc_files_any_env(root: Path) -> list[Path]:
     return sorted(p for p in root.rglob(".env.*.enc") if not _is_excluded_path(p, root))
 
 
-def _in_dir(directory: Path, func, *args, **kwargs):
-    original = Path.cwd()
-    os.chdir(directory)
-    try:
-        return func(*args, **kwargs)
-    finally:
-        os.chdir(original)
+def _resolve_enc(config: dict, directory: Path = None) -> Path:
+    enc = _enc_file(config)
+    if directory:
+        return directory / enc
+    return Path(enc)
 
 
 def _truncate(value: str, max_len: int = 40) -> str:
@@ -264,13 +263,13 @@ def _prompt(label: str, default: str = "") -> str:
 
 # --- SOPS Backend ---
 
-def sops_decrypt(config: dict) -> str:
-    enc = _enc_file(config)
-    if not Path(enc).exists():
+def sops_decrypt(config: dict, directory: Path = None) -> str:
+    enc = _resolve_enc(config, directory)
+    if not enc.exists():
         raise SystemExit(f"No encrypted secrets: {enc}. Run: kint-vault push")
     try:
         return run_cmd([
-            "sops", "decrypt", "--input-type", "dotenv", "--output-type", "dotenv", enc,
+            "sops", "decrypt", "--input-type", "dotenv", "--output-type", "dotenv", str(enc),
         ])
     except SystemExit:
         raise SystemExit(
@@ -279,8 +278,8 @@ def sops_decrypt(config: dict) -> str:
         )
 
 
-def sops_encrypt_file(config: dict, input_file: str):
-    enc = _enc_file(config)
+def sops_encrypt_file(config: dict, input_file: str, directory: Path = None):
+    enc = _resolve_enc(config, directory)
     try:
         encrypted = run_cmd([
             "sops", "encrypt", "--input-type", "dotenv", "--output-type", "dotenv", input_file,
@@ -290,7 +289,7 @@ def sops_encrypt_file(config: dict, input_file: str):
             f"Encryption failed. Is sops installed and .sops.yaml configured?\n"
             f"Run: kint-vault doctor"
         )
-    Path(enc).write_text(encrypted + "\n")
+    enc.write_text(encrypted + "\n")
 
 
 def sops_encrypt_content(config: dict, content: str):
@@ -394,7 +393,7 @@ def cmd_init(args):
 
 
 def _pull_single(config: dict, enc_path: Path, output_path: Path, force: bool):
-    content = _in_dir(enc_path.parent, sops_decrypt, config)
+    content = sops_decrypt(config, enc_path.parent)
     data = (content + "\n").encode()
     resolved = output_path.resolve()
     if resolved.exists():
@@ -474,7 +473,7 @@ def _push_single(config: dict, env_file: str, yes: bool):
         answer = input("Continue? [y/N] ").strip().lower()
         if answer != "y":
             raise SystemExit("Aborted")
-    _in_dir(env_path.parent, sops_encrypt_file, config, ".env")
+    sops_encrypt_file(config, str(env_path), env_path.parent)
     if is_new:
         ok(f"Created {enc_path} with {len(secrets)} secrets")
     else:
@@ -569,7 +568,7 @@ def cmd_list(args):
         result = {}
         for enc in enc_files:
             label = str(enc.parent.relative_to(root))
-            keys = sorted(_parse_env(_in_dir(enc.parent, sops_decrypt, config)).keys())
+            keys = sorted(_parse_env(sops_decrypt(config, enc.parent)).keys())
             result[label] = keys
         if args.json:
             print(json.dumps(result, indent=2))
@@ -601,7 +600,7 @@ def cmd_diff(args):
                 info(f"{label}: no local .env")
                 continue
             local_dict = _parse_env(local.read_text())
-            remote_dict = _parse_env(_in_dir(enc.parent, sops_decrypt, config))
+            remote_dict = _parse_env(sops_decrypt(config, enc.parent))
             result = _format_diff(local_dict, remote_dict)
             if result == "No differences":
                 ok(f"{label}: no differences")
@@ -637,7 +636,7 @@ def cmd_rotate(args):
         if not enc_files:
             raise SystemExit(f"No .env.{env_name}.enc files found")
         for enc in enc_files:
-            _in_dir(enc.parent, run_cmd, ["sops", "rotate", "--input-type", "dotenv", "--output-type", "dotenv", "-i", enc.name])
+            run_cmd(["sops", "rotate", "--input-type", "dotenv", "--output-type", "dotenv", "-i", str(enc)])
             ok(f"Rotated data key for {enc.relative_to(root)}")
         return
     enc = _enc_file(config)
@@ -669,7 +668,7 @@ def cmd_add_recipient(args):
 
     root = find_config().parent
     for enc in _find_all_enc_files_any_env(root):
-        _in_dir(enc.parent, run_cmd, ["sops", "updatekeys", "--input-type", "dotenv", "-y", enc.name])
+        run_cmd(["sops", "updatekeys", "--input-type", "dotenv", "-y", str(enc)])
         ok(f"Updated keys in {enc.relative_to(root)}")
 
 
@@ -697,15 +696,15 @@ def cmd_remove_recipient(args):
 
     root = find_config().parent
     for enc in _find_all_enc_files_any_env(root):
-        _in_dir(enc.parent, run_cmd, ["sops", "updatekeys", "--input-type", "dotenv", "-y", enc.name])
-        _in_dir(enc.parent, run_cmd, ["sops", "rotate", "--input-type", "dotenv", "--output-type", "dotenv", "-i", enc.name])
+        run_cmd(["sops", "updatekeys", "--input-type", "dotenv", "-y", str(enc)])
+        run_cmd(["sops", "rotate", "--input-type", "dotenv", "--output-type", "dotenv", "-i", str(enc)])
         ok(f"Updated keys and rotated data key in {enc.relative_to(root)}")
     info("Removed recipients can still decrypt old versions from git history")
 
 
 def _validate_single(config: dict, enc_dir: Path, template_path: Path, strict: bool, label: str) -> bool:
     required = set(_parse_env(template_path.read_text()).keys())
-    remote_keys = set(_parse_env(_in_dir(enc_dir, sops_decrypt, config)).keys())
+    remote_keys = set(_parse_env(sops_decrypt(config, enc_dir)).keys())
     missing = sorted(required - remote_keys)
     extra = sorted(remote_keys - required) if strict else []
     if not missing and not extra:
@@ -818,6 +817,7 @@ def cmd_env(args):
     with open(config_path) as f:
         config = yaml.safe_load(f)
     if args.name:
+        _validate_env_name(args.name)
         config["env"] = args.name
         with open(config_path, "w") as f:
             yaml.dump(config, f, default_flow_style=False)
