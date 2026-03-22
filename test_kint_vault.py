@@ -329,7 +329,7 @@ class TestCmdRun:
     def test_strips_double_dash(self, argv, expected_cmd):
         parser = kint_vault.build_parser()
         args = parser.parse_args(argv)
-        command = args.command
+        command = args.cmd
         if command and command[0] == "--":
             command = command[1:]
         assert command == expected_cmd

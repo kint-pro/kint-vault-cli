@@ -511,7 +511,7 @@ def cmd_push(args):
 
 
 def cmd_run(args):
-    command = args.command
+    command = args.cmd
     if command and command[0] == "--":
         command = command[1:]
     if not command:
@@ -860,7 +860,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("run", help="Run command with injected secrets")
     p.add_argument("--env")
-    p.add_argument("command", nargs=argparse.REMAINDER, metavar="-- command")
+    p.add_argument("cmd", nargs=argparse.REMAINDER, metavar="-- command")
 
     p = sub.add_parser("set", help="Set secrets (KEY=VALUE ...)")
     p.add_argument("--env")
