@@ -9,7 +9,10 @@ import (
 	"github.com/kint-pro/kint-vault-cli/internal/commands"
 )
 
-var version = "0.2.0"
+// version is set at build time via ldflags:
+//
+//	go build -ldflags "-X main.version=1.0.0" ./cmd/kint-vault/
+var version = "dev"
 
 func usage() {
 	fmt.Fprintf(os.Stderr, `kint-vault — Unified secrets management CLI

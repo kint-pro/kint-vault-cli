@@ -3,6 +3,7 @@ package commands
 import (
 	"os"
 	"os/exec"
+	"os/signal"
 	"syscall"
 
 	"github.com/kint-pro/kint-vault-cli/internal/config"
@@ -41,7 +42,27 @@ func CmdRun(envOverride string, command []string) {
 	cmd.Stderr = os.Stderr
 	cmd.Env = env
 
-	if err := cmd.Run(); err != nil {
+	// Forward signals to child process
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+
+	if err := cmd.Start(); err != nil {
+		fatal(err.Error())
+	}
+
+	go func() {
+		for sig := range sigCh {
+			if cmd.Process != nil {
+				cmd.Process.Signal(sig)
+			}
+		}
+	}()
+
+	err = cmd.Wait()
+	signal.Stop(sigCh)
+	close(sigCh)
+
+	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			if status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
 				os.Exit(status.ExitStatus())

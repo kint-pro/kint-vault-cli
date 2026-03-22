@@ -120,24 +120,39 @@ func CmdList(envOverride string, asJSON, all bool) {
 		if len(encFiles) == 0 {
 			fatal(fmt.Sprintf("No .env.%s.enc files found", envName))
 		}
-		result := make(map[string][]string)
-		for _, enc := range encFiles {
-			dir := filepath.Dir(enc)
+
+		// Parallel decrypt
+		type listData struct {
+			label string
+			keys  []string
+		}
+		results := runParallel(len(encFiles), func(i int) (string, interface{}, error) {
+			dir := filepath.Dir(encFiles[i])
 			label, _ := filepath.Rel(root, dir)
 			content, err := sopsbackend.Decrypt(cfg, dir)
 			if err != nil {
-				fatal(err.Error())
+				return "", nil, err
 			}
 			keys := envfile.SortedKeys(envfile.Parse(content))
-			result[label] = keys
+			return "", &listData{label: label, keys: keys}, nil
+		})
+		if err := collectErrors(results); err != nil {
+			fatal(err.Error())
 		}
+
 		if asJSON {
+			result := make(map[string][]string)
+			for _, r := range results {
+				d := r.Data.(*listData)
+				result[d.label] = d.keys
+			}
 			data, _ := json.MarshalIndent(result, "", "  ")
 			fmt.Println(string(data))
 		} else {
-			for label, keys := range result {
-				output.Info(fmt.Sprintf("%s (%d keys):", label, len(keys)))
-				for _, k := range keys {
+			for _, r := range results {
+				d := r.Data.(*listData)
+				output.Info(fmt.Sprintf("%s (%d keys):", d.label, len(d.keys)))
+				for _, k := range d.keys {
 					fmt.Printf("  %s\n", k)
 				}
 			}

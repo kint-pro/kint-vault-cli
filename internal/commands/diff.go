@@ -33,17 +33,21 @@ func CmdDiff(envOverride string, asJSON, all bool) {
 			fatal(fmt.Sprintf("No .env.%s.enc files found", envName))
 		}
 
-		allResults := make(map[string]envfile.DiffData)
-		for _, enc := range encFiles {
-			dir := filepath.Dir(enc)
+		type diffResult struct {
+			label     string
+			hasLocal  bool
+			diffText  string
+			diffData  envfile.DiffData
+		}
+
+		// Parallel decrypt + diff
+		results := runParallel(len(encFiles), func(i int) (string, interface{}, error) {
+			dir := filepath.Dir(encFiles[i])
 			localPath := filepath.Join(dir, ".env")
 			label, _ := filepath.Rel(root, dir)
 
 			if _, err := os.Stat(localPath); os.IsNotExist(err) {
-				if !asJSON {
-					output.Info(fmt.Sprintf("%s: no local .env", label))
-				}
-				continue
+				return "", &diffResult{label: label, hasLocal: false}, nil
 			}
 
 			localContent, _ := os.ReadFile(localPath)
@@ -51,25 +55,45 @@ func CmdDiff(envOverride string, asJSON, all bool) {
 
 			remoteContent, err := sopsbackend.Decrypt(cfg, dir)
 			if err != nil {
-				fatal(err.Error())
+				return "", nil, err
 			}
 			remoteDict := envfile.Parse(remoteContent)
 
-			if asJSON {
-				allResults[label] = envfile.ComputeDiff(localDict, remoteDict)
-			} else {
-				result := formatDiff(localDict, remoteDict)
-				if result == "No differences" {
-					output.Ok(fmt.Sprintf("%s: no differences", label))
-				} else {
-					output.Info(fmt.Sprintf("%s:", label))
-					fmt.Println(result)
+			return "", &diffResult{
+				label:    label,
+				hasLocal: true,
+				diffText: formatDiff(localDict, remoteDict),
+				diffData: envfile.ComputeDiff(localDict, remoteDict),
+			}, nil
+		})
+		if err := collectErrors(results); err != nil {
+			fatal(err.Error())
+		}
+
+		if asJSON {
+			allResults := make(map[string]envfile.DiffData)
+			for _, r := range results {
+				d := r.Data.(*diffResult)
+				if d.hasLocal {
+					allResults[d.label] = d.diffData
 				}
 			}
-		}
-		if asJSON {
 			data, _ := json.MarshalIndent(allResults, "", "  ")
 			fmt.Println(string(data))
+		} else {
+			for _, r := range results {
+				d := r.Data.(*diffResult)
+				if !d.hasLocal {
+					output.Info(fmt.Sprintf("%s: no local .env", d.label))
+					continue
+				}
+				if d.diffText == "No differences" {
+					output.Ok(fmt.Sprintf("%s: no differences", d.label))
+				} else {
+					output.Info(fmt.Sprintf("%s:", d.label))
+					fmt.Println(d.diffText)
+				}
+			}
 		}
 		return
 	}
