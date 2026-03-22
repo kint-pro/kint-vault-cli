@@ -394,23 +394,51 @@ class TestCmdPull:
         assert oct(env_path.stat().st_mode & 0o777) == "0o600"
         assert "A=1" in env_path.read_text()
 
-    def test_pull_refuses_overwrite(self, tmp_path, monkeypatch):
+    def test_pull_shows_diff_and_aborts_on_no(self, tmp_path, monkeypatch):
         _setup_project(tmp_path, monkeypatch)
-        (tmp_path / ".env").write_text("existing")
+        (tmp_path / ".env").write_text("A=old")
+        with patch("kint_vault.sops_decrypt", return_value="A=new"):
+            monkeypatch.setattr("builtins.input", lambda _: "n")
+            parser = kint_vault.build_parser()
+            args = parser.parse_args(["pull"])
+            with pytest.raises(SystemExit, match="Aborted"):
+                kint_vault.cmd_pull(args)
+        assert (tmp_path / ".env").read_text() == "A=old"
+
+    def test_pull_shows_diff_and_overwrites_on_yes(self, tmp_path, monkeypatch, capsys):
+        _setup_project(tmp_path, monkeypatch)
+        (tmp_path / ".env").write_text("A=old\nB=local_only")
+        with patch("kint_vault.sops_decrypt", return_value="A=new"):
+            monkeypatch.setattr("builtins.input", lambda _: "y")
+            parser = kint_vault.build_parser()
+            args = parser.parse_args(["pull"])
+            kint_vault.cmd_pull(args)
+        content = (tmp_path / ".env").read_text()
+        assert "A=new" in content
+        output = capsys.readouterr().out
+        assert "A=old" in output
+        assert "B=local_only" in output
+
+    def test_pull_skips_when_no_differences(self, tmp_path, monkeypatch, capsys):
+        _setup_project(tmp_path, monkeypatch)
+        (tmp_path / ".env").write_text("A=1")
         with patch("kint_vault.sops_decrypt", return_value="A=1"):
             parser = kint_vault.build_parser()
             args = parser.parse_args(["pull"])
-            with pytest.raises(SystemExit, match="already exists"):
-                kint_vault.cmd_pull(args)
+            kint_vault.cmd_pull(args)
+        output = capsys.readouterr().out
+        assert "No differences" in output
 
-    def test_pull_force_overwrites(self, tmp_path, monkeypatch):
+    def test_pull_force_overwrites(self, tmp_path, monkeypatch, capsys):
         _setup_project(tmp_path, monkeypatch)
-        (tmp_path / ".env").write_text("old")
+        (tmp_path / ".env").write_text("OLD=val")
         with patch("kint_vault.sops_decrypt", return_value="NEW=val"):
             parser = kint_vault.build_parser()
             args = parser.parse_args(["pull", "--force"])
             kint_vault.cmd_pull(args)
         assert "NEW=val" in (tmp_path / ".env").read_text()
+        output = capsys.readouterr().out
+        assert "OLD=val" in output
 
     def test_pull_json(self, tmp_path, monkeypatch, capsys):
         _setup_project(tmp_path, monkeypatch)

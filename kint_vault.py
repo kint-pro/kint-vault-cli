@@ -23,6 +23,7 @@ ENV_EXAMPLE = ".env.example"
 class C:
     RED = "\033[91m"
     GREEN = "\033[92m"
+    YELLOW = "\033[93m"
     BLUE = "\033[94m"
     RESET = "\033[0m"
 
@@ -43,6 +44,13 @@ def err(msg: str):
         print(f"{C.RED}✗{C.RESET} {msg}", file=sys.stderr)
     else:
         print(f"ERROR: {msg}", file=sys.stderr)
+
+
+def warn(msg: str):
+    if _color_enabled():
+        print(f"{C.YELLOW}⚠{C.RESET} {msg}")
+    else:
+        print(f"WARNING: {msg}")
 
 
 def info(msg: str):
@@ -383,17 +391,41 @@ def cmd_init(args):
     print(ALIAS_HINT)
 
 
+def _show_overwritten(local: dict, remote: dict):
+    """Print values that will be lost during overwrite."""
+    lost = []
+    for key in sorted(local):
+        if key not in remote:
+            lost.append(f"  {key}={local[key]}")
+        elif local[key] != remote[key]:
+            lost.append(f"  {key}={local[key]}")
+    if lost:
+        warn("Overwritten local values:")
+        for line in lost:
+            print(line)
+
+
 def _pull_single(config: dict, enc_path: Path, output_path: Path, force: bool):
     content = _in_dir(enc_path.parent, sops_decrypt, config)
     data = (content + "\n").encode()
     resolved = output_path.resolve()
-    if force:
+    if resolved.exists():
+        local_dict = _parse_env(resolved.read_text())
+        remote_dict = _parse_env(content)
+        if not force:
+            diff = _format_diff(local_dict, remote_dict)
+            if diff == "No differences":
+                info("No differences, skipping")
+                return
+            warn(f"{output_path} already exists. Differences:")
+            print(diff)
+            answer = input("Overwrite local .env? [y/N] ").strip().lower()
+            if answer != "y":
+                raise SystemExit("Aborted")
+        _show_overwritten(local_dict, remote_dict)
         fd = os.open(resolved, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     else:
-        try:
-            fd = os.open(resolved, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        except FileExistsError:
-            raise SystemExit(f"{output_path} already exists. Use --force to overwrite")
+        fd = os.open(resolved, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
         os.write(fd, data)
     finally:
