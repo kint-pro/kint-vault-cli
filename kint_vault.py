@@ -818,8 +818,17 @@ def cmd_doctor(args):
         _print_checks(checks)
         raise SystemExit(1)
 
+    age_key_env = os.environ.get("SOPS_AGE_KEY")
     key_file = _age_key_file()
-    if key_file.exists():
+    pubkey = None
+    if age_key_env:
+        prefix = "# public key: "
+        for line in age_key_env.splitlines():
+            if line.startswith(prefix):
+                pubkey = line[len(prefix):].strip()
+                break
+        checks.append(("age key (SOPS_AGE_KEY)", True, f"{pubkey[:20]}..." if pubkey else "set"))
+    elif key_file.exists():
         pubkey = _read_age_pubkey(key_file)
         checks.append(("age key exists", True, f"{pubkey[:20]}..."))
     else:
@@ -835,7 +844,9 @@ def cmd_doctor(args):
         _print_checks(checks)
         raise SystemExit(1)
 
-    if pubkey in recipients:
+    if not pubkey:
+        checks.append(("Your key in recipients", True, "skipped (no public key to check)"))
+    elif pubkey in recipients:
         checks.append(("Your key in recipients", True, ""))
     else:
         checks.append(("Your key in recipients", False, "Ask team to run: kint-vault add-recipient <your-key>"))
