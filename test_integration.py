@@ -680,11 +680,6 @@ class TestMonorepoEdgeCases:
         assert "VENV" not in all_keys
 
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#  PREVIOUSLY MISSING TESTS
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-
 class TestEdit:
     def test_edit_no_encrypted_file(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
