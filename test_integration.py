@@ -477,6 +477,118 @@ class TestEdgePushPull:
         assert "No differences" in out
 
 
+class TestMonorepo:
+    """Tests for --all flag across a monorepo with multiple services."""
+
+    @pytest.fixture()
+    def monorepo(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+
+        # init at root
+        out, err, code = kv("init", "--env", "dev", input_text="dev")
+        assert code == 0, f"init failed: {err}"
+
+        # create two services with their own .env
+        for svc in ["services/api", "services/worker"]:
+            svc_dir = tmp_path / svc
+            svc_dir.mkdir(parents=True)
+
+        (tmp_path / "services/api/.env").write_text("API_KEY=api-secret\nPORT=3000\n")
+        (tmp_path / "services/worker/.env").write_text("WORKER_KEY=worker-secret\nQUEUE=redis\n")
+
+        # push all
+        out, err, code = kv("push", "--all", "-y")
+        assert code == 0, f"push --all failed: {err}"
+
+        # remove .env files
+        (tmp_path / "services/api/.env").unlink()
+        (tmp_path / "services/worker/.env").unlink()
+
+        return tmp_path
+
+    def test_pull_all(self, monorepo):
+        out, err, code = kv("pull", "--all", "--force")
+        assert code == 0
+        api_env = (monorepo / "services/api/.env").read_text()
+        assert "API_KEY=api-secret" in api_env
+        worker_env = (monorepo / "services/worker/.env").read_text()
+        assert "WORKER_KEY=worker-secret" in worker_env
+
+    def test_pull_all_shows_file_list(self, monorepo):
+        out, err, code = kv("pull", "--all", "--force")
+        assert code == 0
+        assert "services/api" in out
+        assert "services/worker" in out
+
+    def test_pull_all_confirms_per_service(self, monorepo):
+        """Without --force, pull --all asks per service."""
+        # create existing .env with different content
+        (monorepo / "services/api").mkdir(parents=True, exist_ok=True)
+        (monorepo / "services/api/.env").write_text("OLD=x")
+        (monorepo / "services/worker").mkdir(parents=True, exist_ok=True)
+        (monorepo / "services/worker/.env").write_text("OLD=y")
+        # answer y for both
+        out, err, code = kv("pull", "--all", input_text="y\ny\n")
+        assert code == 0
+
+    def test_list_all(self, monorepo):
+        out, err, code = kv("list", "--all")
+        assert code == 0
+        assert "API_KEY" in out
+        assert "WORKER_KEY" in out
+
+    def test_list_all_json(self, monorepo):
+        out, err, code = kv("list", "--all", "--json")
+        assert code == 0
+        data = json.loads(out)
+        assert any("API_KEY" in keys for keys in data.values())
+        assert any("WORKER_KEY" in keys for keys in data.values())
+
+    def test_diff_all(self, monorepo):
+        kv("pull", "--all", "--force")
+        out, err, code = kv("diff", "--all")
+        assert code == 0
+        # both services should report no differences
+        assert out.count("no differences") == 2
+
+    def test_diff_all_json(self, monorepo):
+        kv("pull", "--all", "--force")
+        out, err, code = kv("diff", "--all", "--json")
+        assert code == 0
+        data = json.loads(out)
+        assert len(data) == 2
+        for label, diff in data.items():
+            assert diff["added"] == {}
+            assert diff["removed"] == {}
+            assert diff["modified"] == {}
+
+    def test_validate_all(self, monorepo):
+        # create templates
+        (monorepo / "services/api/.env.example").write_text("API_KEY=\nPORT=\n")
+        (monorepo / "services/worker/.env.example").write_text("WORKER_KEY=\nQUEUE=\n")
+        out, err, code = kv("validate", "--all")
+        assert code == 0
+
+    def test_validate_all_json(self, monorepo):
+        (monorepo / "services/api/.env.example").write_text("API_KEY=\nMISSING=\n")
+        (monorepo / "services/worker/.env.example").write_text("WORKER_KEY=\n")
+        out, err, code = kv("validate", "--all", "--json")
+        assert code == 1
+        data = json.loads(out)
+        assert len(data) == 2
+        # one should fail, one should pass
+        results = list(data.values())
+        assert any(not r["valid"] for r in results)
+        assert any(r["valid"] for r in results)
+
+    def test_rotate_all(self, monorepo):
+        out, err, code = kv("rotate", "--all")
+        assert code == 0
+        # secrets still accessible
+        kv("pull", "--all", "--force")
+        assert "API_KEY=api-secret" in (monorepo / "services/api/.env").read_text()
+
+
 class TestEdgeCI:
     def test_all_commands_with_sops_age_key(self, project):
         """Simulate CI: use SOPS_AGE_KEY env var instead of key file."""
