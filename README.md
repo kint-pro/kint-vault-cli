@@ -174,6 +174,7 @@ Then validate:
 kint-vault validate                   # check all keys exist
 kint-vault validate --strict          # also flag extra keys not in template
 kint-vault validate -t .env.required  # custom template file
+kint-vault validate --json            # machine-readable output
 kint-vault validate --all             # all services (monorepo)
 ```
 
@@ -181,6 +182,7 @@ kint-vault validate --all             # all services (monorepo)
 
 ```bash
 kint-vault diff                    # single project
+kint-vault diff --json             # machine-readable output
 kint-vault diff --all              # all services (monorepo)
 ```
 
@@ -282,6 +284,43 @@ kint-vault rotate --all            # rotate keys for all services
 kint-vault list --all              # list keys for all services
 ```
 
+## CI/CD
+
+### Setup
+
+```bash
+# generate a CI-only age key
+age-keygen -o ci-key.txt
+# note the public key from output: age1abc...
+
+# add as recipient
+kint-vault add-recipient age1abc...
+git add .sops.yaml .env.*.enc
+git commit -m "add CI key" && git push
+```
+
+Store the private key from `ci-key.txt` as a GitHub Secret named `SOPS_AGE_KEY`.
+
+### GitHub Actions
+
+```yaml
+- name: Decrypt secrets
+  env:
+    SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+  run: kint-vault pull --force
+```
+
+Or inject secrets without writing to disk:
+
+```yaml
+- name: Run tests with secrets
+  env:
+    SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+  run: kint-vault run -- npm test
+```
+
+All commands work with `SOPS_AGE_KEY` — no key file needed. Use `--force`, `-y`, and `--json` flags to avoid interactive prompts.
+
 ## Configuration
 
 ### `.kint-vault.yaml`
@@ -304,7 +343,8 @@ Every command accepts `--env` to override the default environment.
 
 | Variable | Description |
 |----------|-------------|
-| `SOPS_AGE_KEY_FILE` | Override age key location (default: `~/.config/sops/age/keys.txt`) |
+| `SOPS_AGE_KEY` | Age private key content (for CI/CD, instead of key file) |
+| `SOPS_AGE_KEY_FILE` | Override age key file location (default: `~/.config/sops/age/keys.txt`) |
 | `NO_COLOR` | Disable colored output |
 
 ### Alias
