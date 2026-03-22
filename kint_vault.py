@@ -144,10 +144,7 @@ def _save_sops_config(config: dict):
     while path != path.parent:
         candidate = path / SOPS_CONFIG
         if candidate.exists():
-            with tempfile.NamedTemporaryFile("w", dir=candidate.parent, suffix=".tmp", delete=False) as f:
-                yaml.dump(config, f, default_flow_style=False)
-                tmp = f.name
-            os.replace(tmp, candidate)
+            _atomic_write(candidate, yaml.dump(config, default_flow_style=False))
             return
         path = path.parent
     raise SystemExit(f"No {SOPS_CONFIG} found")
@@ -207,6 +204,17 @@ def _resolve_enc(config: dict, directory: Path = None) -> Path:
     if directory:
         return directory / enc
     return Path(enc)
+
+
+def _atomic_write(path: Path, content: str):
+    fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    try:
+        os.write(fd, content.encode())
+        os.close(fd)
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
 
 
 def _truncate(value: str, max_len: int = 40) -> str:
@@ -289,11 +297,11 @@ def sops_encrypt_file(config: dict, input_file: str, directory: Path = None):
             f"Encryption failed. Is sops installed and .sops.yaml configured?\n"
             f"Run: kint-vault doctor"
         )
-    enc.write_text(encrypted + "\n")
+    _atomic_write(enc, encrypted + "\n")
 
 
 def sops_encrypt_content(config: dict, content: str):
-    enc = _enc_file(config)
+    enc = Path(_enc_file(config))
     fd, tmp_path = tempfile.mkstemp(prefix=".env.", suffix=".tmp", dir=".")
     try:
         os.write(fd, (content + "\n").encode())
@@ -311,7 +319,7 @@ def sops_encrypt_content(config: dict, content: str):
                 f"Encryption failed. Is sops installed and .sops.yaml configured?\n"
                 f"Run: kint-vault doctor"
             )
-        Path(enc).write_text(encrypted + "\n")
+        _atomic_write(enc, encrypted + "\n")
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 
@@ -819,8 +827,7 @@ def cmd_env(args):
     if args.name:
         _validate_env_name(args.name)
         config["env"] = args.name
-        with open(config_path, "w") as f:
-            yaml.dump(config, f, default_flow_style=False)
+        _atomic_write(config_path, yaml.dump(config, default_flow_style=False))
         ok(f"Switched to environment: {args.name}")
     else:
         print(config.get("env", "dev"))
