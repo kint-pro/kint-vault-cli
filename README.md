@@ -7,36 +7,47 @@ Stop copying `.env` files manually. `kint-vault` encrypts secrets directly in yo
 ## Quick Start
 
 ```bash
-pipx install git+https://github.com/kint-pro/kint-vault-cli.git
+# download binary (see Installation below)
 cd your-project
 kint-vault pull                  # decrypt secrets → .env
 ```
 
 That's it. If this is a new project, see [Setup a project](#setup-a-project) below.
 
-## Prerequisites
+## Installation
 
-### macOS
+Single binary, no dependencies (sops and age are still required on PATH):
 
+```bash
+# from source (requires Go 1.21+)
+git clone https://github.com/kint-pro/kint-vault-cli.git
+cd kint-vault-cli
+go build -o kint-vault ./cmd/kint-vault/
+sudo mv kint-vault /usr/local/bin/
+
+# or install directly
+go install github.com/kint-pro/kint-vault-cli/cmd/kint-vault@latest
+```
+
+### Prerequisites
+
+sops and age must be installed separately:
+
+**macOS:**
 ```bash
 brew install sops age
 ```
 
-### Linux (Debian/Ubuntu)
-
+**Linux (Debian/Ubuntu):**
 ```bash
-# age
 sudo apt install age
-
-# sops (not in apt — install .deb from GitHub)
 curl -LO https://github.com/getsops/sops/releases/download/v3.12.2/sops_3.12.2_amd64.deb
 sudo dpkg -i sops_3.12.2_amd64.deb
 ```
 
 Check [SOPS releases](https://github.com/getsops/sops/releases) for the latest version.
 
-### Windows
-
+**Windows:**
 ```powershell
 winget install Mozilla.SOPS FiloSottile.age
 ```
@@ -44,29 +55,9 @@ winget install Mozilla.SOPS FiloSottile.age
 Verify:
 
 ```bash
+kint-vault --version
 sops --version
 age --version
-```
-
-## Installation
-
-```bash
-# pipx (recommended)
-pipx install git+https://github.com/kint-pro/kint-vault-cli.git
-
-# uv
-uv tool install git+https://github.com/kint-pro/kint-vault-cli.git
-
-# from source
-git clone https://github.com/kint-pro/kint-vault-cli.git
-cd kint-vault-cli
-pip install .
-```
-
-Verify:
-
-```bash
-kint-vault --version
 kint-vault doctor
 ```
 
@@ -235,7 +226,7 @@ kint-vault doctor
 
 ```bash
 # 1. Install prerequisites (see above) and kint-vault
-pipx install git+https://github.com/kint-pro/kint-vault-cli.git
+go install github.com/kint-pro/kint-vault-cli/cmd/kint-vault@latest
 
 # 2. Clone project and initialize
 git clone <your-project> && cd <your-project>

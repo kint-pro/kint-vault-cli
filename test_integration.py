@@ -19,6 +19,9 @@ from pathlib import Path
 import pytest
 
 
+_KV_BIN = os.environ.get("KV_BIN", os.path.join(os.path.dirname(__file__), "kint-vault"))
+
+
 def kv(*args, env=None, input_text=None):
     """Run kint-vault command, return (stdout, stderr, exit_code)."""
     cmd_env = os.environ.copy()
@@ -26,7 +29,7 @@ def kv(*args, env=None, input_text=None):
     if env:
         cmd_env.update(env)
     result = subprocess.run(
-        ["python", "-m", "kint_vault", *args],
+        [_KV_BIN, *args],
         capture_output=True, text=True, env=cmd_env,
         input=input_text,
     )

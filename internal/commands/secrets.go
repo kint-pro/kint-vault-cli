@@ -1,0 +1,162 @@
+package commands
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/kint-pro/kint-vault-cli/internal/config"
+	"github.com/kint-pro/kint-vault-cli/internal/envfile"
+	"github.com/kint-pro/kint-vault-cli/internal/output"
+	"github.com/kint-pro/kint-vault-cli/internal/sopsbackend"
+)
+
+func CmdSet(envOverride string, pairs []string) {
+	cfg, err := config.LoadConfig(envOverride)
+	if err != nil {
+		fatal(err.Error())
+	}
+
+	enc := config.EncFile(cfg)
+	secrets := make(map[string]string)
+	if _, err := os.Stat(enc); err == nil {
+		content, err := sopsbackend.Decrypt(cfg, "")
+		if err != nil {
+			fatal(err.Error())
+		}
+		secrets = envfile.Parse(content)
+	}
+
+	for _, pair := range pairs {
+		if !strings.Contains(pair, "=") {
+			fatal(fmt.Sprintf("Invalid format: %s. Use KEY=VALUE", pair))
+		}
+		idx := strings.Index(pair, "=")
+		key := pair[:idx]
+		value := pair[idx+1:]
+		secrets[key] = value
+		output.Ok(fmt.Sprintf("Set %s", key))
+	}
+
+	if err := sopsbackend.EncryptContent(cfg, envfile.Format(secrets)); err != nil {
+		fatal(err.Error())
+	}
+}
+
+func CmdGet(envOverride, key string) {
+	cfg, err := config.LoadConfig(envOverride)
+	if err != nil {
+		fatal(err.Error())
+	}
+
+	content, err := sopsbackend.Decrypt(cfg, "")
+	if err != nil {
+		fatal(err.Error())
+	}
+
+	secrets := envfile.Parse(content)
+	val, ok := secrets[key]
+	if !ok {
+		fatal(fmt.Sprintf("Key not found: %s", key))
+	}
+	fmt.Println(val)
+}
+
+func CmdDelete(envOverride string, keys []string, yes bool) {
+	cfg, err := config.LoadConfig(envOverride)
+	if err != nil {
+		fatal(err.Error())
+	}
+
+	content, err := sopsbackend.Decrypt(cfg, "")
+	if err != nil {
+		fatal(err.Error())
+	}
+
+	secrets := envfile.Parse(content)
+
+	if !yes {
+		output.Info(fmt.Sprintf("Will delete from %s:", config.EncFile(cfg)))
+		for _, key := range keys {
+			fmt.Printf("  %s\n", key)
+		}
+		if !confirm("Continue? [y/N]") {
+			fatal("Aborted")
+		}
+	}
+
+	for _, key := range keys {
+		if _, ok := secrets[key]; !ok {
+			fatal(fmt.Sprintf("Key not found: %s", key))
+		}
+		delete(secrets, key)
+		output.Ok(fmt.Sprintf("Deleted %s", key))
+	}
+
+	if err := sopsbackend.EncryptContent(cfg, envfile.Format(secrets)); err != nil {
+		fatal(err.Error())
+	}
+}
+
+func CmdList(envOverride string, asJSON, all bool) {
+	cfg, err := config.LoadConfig(envOverride)
+	if err != nil {
+		fatal(err.Error())
+	}
+
+	if all {
+		configPath, err := config.FindConfigPath()
+		if err != nil {
+			fatal(err.Error())
+		}
+		root := filepath.Dir(configPath)
+		envName := cfg.Env
+		if envName == "" {
+			envName = "dev"
+		}
+		encFiles := findAllEncFilesRecursive(root, envName)
+		if len(encFiles) == 0 {
+			fatal(fmt.Sprintf("No .env.%s.enc files found", envName))
+		}
+		result := make(map[string][]string)
+		for _, enc := range encFiles {
+			dir := filepath.Dir(enc)
+			label, _ := filepath.Rel(root, dir)
+			content, err := sopsbackend.Decrypt(cfg, dir)
+			if err != nil {
+				fatal(err.Error())
+			}
+			keys := envfile.SortedKeys(envfile.Parse(content))
+			result[label] = keys
+		}
+		if asJSON {
+			data, _ := json.MarshalIndent(result, "", "  ")
+			fmt.Println(string(data))
+		} else {
+			for label, keys := range result {
+				output.Info(fmt.Sprintf("%s (%d keys):", label, len(keys)))
+				for _, k := range keys {
+					fmt.Printf("  %s\n", k)
+				}
+			}
+		}
+		return
+	}
+
+	content, err := sopsbackend.Decrypt(cfg, "")
+	if err != nil {
+		fatal(err.Error())
+	}
+
+	keys := envfile.SortedKeys(envfile.Parse(content))
+	if asJSON {
+		data, _ := json.MarshalIndent(keys, "", "  ")
+		fmt.Println(string(data))
+	} else {
+		for _, k := range keys {
+			fmt.Println(k)
+		}
+	}
+}
