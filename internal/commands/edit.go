@@ -22,10 +22,12 @@ func CmdEdit(envOverride string) {
 		fatal(fmt.Sprintf("No encrypted secrets: %s", enc))
 	}
 
-	// Decrypt to temp file
-	content, err := sopsbackend.Decrypt(cfg, "")
+	result, err := sopsbackend.DecryptForUpdate(cfg)
 	if err != nil {
 		fatal(err.Error())
+	}
+	if result == nil {
+		fatal(fmt.Sprintf("No encrypted secrets: %s", enc))
 	}
 
 	tmpFile, err := os.CreateTemp("", "kint-vault-edit-*.env")
@@ -35,11 +37,10 @@ func CmdEdit(envOverride string) {
 	tmpPath := tmpFile.Name()
 	defer os.Remove(tmpPath)
 
-	tmpFile.WriteString(content + "\n")
+	tmpFile.WriteString(envfile.Format(result.Secrets) + "\n")
 	tmpFile.Close()
 	config.RestrictFile(tmpPath)
 
-	// Open in $EDITOR
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
 		editor = "vi"
@@ -56,16 +57,13 @@ func CmdEdit(envOverride string) {
 		fatal(fmt.Sprintf("Edit failed (exit %d)", exitCode))
 	}
 
-	// Re-encrypt
 	edited, err := os.ReadFile(tmpPath)
 	if err != nil {
 		fatal(err.Error())
 	}
 
-	// Validate it parses as env
-	_ = envfile.Parse(string(edited))
-
-	if err := sopsbackend.EncryptContent(cfg, envfile.Format(envfile.Parse(string(edited)))); err != nil {
+	secrets := envfile.Parse(string(edited))
+	if err := sopsbackend.EncryptContentWithKey(cfg, envfile.Format(secrets), result.DataKey, result.Cipher); err != nil {
 		fatal(err.Error())
 	}
 

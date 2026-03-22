@@ -3,7 +3,6 @@ package commands
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -19,14 +18,16 @@ func CmdSet(envOverride string, pairs []string) {
 		fatal(err.Error())
 	}
 
-	enc := config.EncFile(cfg)
-	secrets := make(map[string]string)
-	if _, err := os.Stat(enc); err == nil {
-		content, err := sopsbackend.Decrypt(cfg, "")
-		if err != nil {
-			fatal(err.Error())
-		}
-		secrets = envfile.Parse(content)
+	result, err := sopsbackend.DecryptForUpdate(cfg)
+	if err != nil {
+		fatal(err.Error())
+	}
+
+	var secrets map[string]string
+	if result != nil {
+		secrets = result.Secrets
+	} else {
+		secrets = make(map[string]string)
 	}
 
 	for _, pair := range pairs {
@@ -35,13 +36,21 @@ func CmdSet(envOverride string, pairs []string) {
 		}
 		idx := strings.Index(pair, "=")
 		key := pair[:idx]
-		value := pair[idx+1:]
-		secrets[key] = value
+		if strings.HasPrefix(key, "kv_") {
+			fatal(fmt.Sprintf("Key %q uses reserved prefix \"kv_\"", key))
+		}
+		secrets[key] = pair[idx+1:]
 		output.Ok(fmt.Sprintf("Set %s", key))
 	}
 
-	if err := sopsbackend.EncryptContent(cfg, envfile.Format(secrets)); err != nil {
-		fatal(err.Error())
+	if result != nil {
+		if err := sopsbackend.EncryptContentWithKey(cfg, envfile.Format(secrets), result.DataKey, result.Cipher); err != nil {
+			fatal(err.Error())
+		}
+	} else {
+		if err := sopsbackend.EncryptContent(cfg, envfile.Format(secrets)); err != nil {
+			fatal(err.Error())
+		}
 	}
 }
 
@@ -70,12 +79,15 @@ func CmdDelete(envOverride string, keys []string, yes bool) {
 		fatal(err.Error())
 	}
 
-	content, err := sopsbackend.Decrypt(cfg, "")
+	result, err := sopsbackend.DecryptForUpdate(cfg)
 	if err != nil {
 		fatal(err.Error())
 	}
+	if result == nil {
+		fatal(fmt.Sprintf("No encrypted secrets: %s. Run: kint-vault push", config.EncFile(cfg)))
+	}
 
-	secrets := envfile.Parse(content)
+	secrets := result.Secrets
 
 	if !yes {
 		output.Info(fmt.Sprintf("Will delete from %s:", config.EncFile(cfg)))
@@ -95,7 +107,7 @@ func CmdDelete(envOverride string, keys []string, yes bool) {
 		output.Ok(fmt.Sprintf("Deleted %s", key))
 	}
 
-	if err := sopsbackend.EncryptContent(cfg, envfile.Format(secrets)); err != nil {
+	if err := sopsbackend.EncryptContentWithKey(cfg, envfile.Format(secrets), result.DataKey, result.Cipher); err != nil {
 		fatal(err.Error())
 	}
 }
@@ -121,7 +133,6 @@ func CmdList(envOverride string, asJSON, all bool) {
 			fatal(fmt.Sprintf("No .env.%s.enc files found", envName))
 		}
 
-		// Parallel decrypt
 		type listData struct {
 			label string
 			keys  []string

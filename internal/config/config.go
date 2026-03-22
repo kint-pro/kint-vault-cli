@@ -244,23 +244,6 @@ func RestrictFile(path string) {
 	}
 }
 
-func InstallHint(tool string) string {
-	if runtime.GOOS == "darwin" {
-		return fmt.Sprintf("Install: brew install %s", tool)
-	}
-	if runtime.GOOS == "windows" {
-		pkg := "Mozilla.SOPS"
-		if tool != "sops" {
-			pkg = "FiloSottile.age"
-		}
-		return fmt.Sprintf("Install: winget install %s", pkg)
-	}
-	repo := "getsops/sops"
-	if tool != "sops" {
-		repo = "FiloSottile/age"
-	}
-	return fmt.Sprintf("Install: https://github.com/%s/releases", repo)
-}
 
 func ResolveEnc(cfg *Config, directory string) string {
 	enc := EncFile(cfg)

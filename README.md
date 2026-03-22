@@ -334,20 +334,25 @@ creation_rules:
 
 ### Encrypted files
 
-Encrypted files (`.env.dev.enc`, `.env.production.enc`) are committed to git. They are age-encrypted (armored PEM format):
+Encrypted files (`.env.dev.enc`, `.env.production.enc`) are committed to git. Keys are in cleartext, values encrypted with AES-256-GCM:
 
 ```
------BEGIN AGE ENCRYPTED FILE-----
-YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+...
------END AGE ENCRYPTED FILE-----
+API_KEY=ENC[AES256_GCM,data:abc...,iv:...,tag:...,type:str]
+DB_HOST=ENC[AES256_GCM,data:xyz...,iv:...,tag:...,type:str]
+kv_age_recipient_0=age1abc...
+kv_age_key=-----BEGIN AGE ENCRYPTED FILE-----\n...
+kv_mac=ENC[AES256_GCM,data:...,iv:...,tag:...,type:str]
+kv_version=1
 ```
 
 ## How It Works
 
 1. Each developer has an **age key pair** (private key stays local, public key shared)
-2. `kint-vault push` encrypts the entire `.env` content with **every recipient's public key**
-3. Any recipient can decrypt with their private key
-4. Adding/removing recipients re-encrypts the file for the updated recipient list
+2. A random **data key** (AES-256) encrypts each secret value individually
+3. The data key is wrapped with **every recipient's age public key**
+4. Any recipient can unwrap the data key with their private key → decrypt the values
+5. Adding/removing recipients only changes who can unwrap the data key
+6. A **MAC** (HMAC-SHA256, encrypted) ensures integrity — tampering is detected
 
 ## License
 
