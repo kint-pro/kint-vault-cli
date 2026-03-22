@@ -680,6 +680,206 @@ class TestMonorepoEdgeCases:
         assert "VENV" not in all_keys
 
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  PREVIOUSLY MISSING TESTS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+class TestEdit:
+    def test_edit_no_encrypted_file(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        kv("init", "--env", "dev", input_text="dev")
+        out, err, code = kv("edit")
+        assert code == 1
+        assert "No encrypted secrets" in (out + err)
+
+    def test_edit_runs_sops(self, project):
+        # sops edit needs a terminal, so we just verify it doesn't crash before calling sops
+        # EDITOR=true makes sops edit succeed without interaction
+        out, err, code = kv("edit", env={"EDITOR": "true"})
+        # sops may fail without a proper terminal, but it should not be a python crash
+        assert code == 0 or "Edit failed" in (out + err)
+
+
+class TestValidateTemplate:
+    def test_validate_custom_template(self, project):
+        (project / "custom.tpl").write_text("API_KEY=\nDB_HOST=\n")
+        out, err, code = kv("validate", "-t", "custom.tpl")
+        assert code == 0
+
+    def test_validate_custom_template_missing_key(self, project):
+        (project / "custom.tpl").write_text("API_KEY=\nNOPE=\n")
+        out, err, code = kv("validate", "-t", "custom.tpl")
+        assert code == 1
+
+    def test_validate_custom_template_json(self, project):
+        (project / "custom.tpl").write_text("API_KEY=\nNOPE=\n")
+        out, err, code = kv("validate", "-t", "custom.tpl", "--json")
+        assert code == 1
+        data = json.loads(out)
+        assert "NOPE" in data["missing"]
+
+
+class TestQuotedValues:
+    def test_double_quoted_value(self, project):
+        kv("set", 'QUOTED="hello world"')
+        out, _, code = kv("get", "QUOTED")
+        assert code == 0
+        # _parse_env strips quotes, so the value should be without quotes
+        assert out.strip() == "hello world"
+
+    def test_single_quoted_value(self, project):
+        kv("set", "QUOTED='hello world'")
+        out, _, code = kv("get", "QUOTED")
+        assert code == 0
+        assert out.strip() == "hello world"
+
+    def test_unquoted_value_preserved(self, project):
+        kv("set", "PLAIN=no quotes here")
+        out, _, _ = kv("get", "PLAIN")
+        assert out.strip() == "no quotes here"
+
+    def test_mismatched_quotes_preserved(self, project):
+        kv("set", """MIXED="hello'""")
+        out, _, _ = kv("get", "MIXED")
+        # mismatched quotes should NOT be stripped
+        assert out.strip() == """"hello'"""
+
+
+class TestDeleteWithPrompt:
+    def test_delete_confirm_yes(self, project):
+        out, err, code = kv("delete", "API_KEY", input_text="y")
+        assert code == 0
+        _, _, code2 = kv("get", "API_KEY")
+        assert code2 == 1
+
+    def test_delete_confirm_no(self, project):
+        out, err, code = kv("delete", "API_KEY", input_text="n")
+        assert code == 1
+        out2, _, code2 = kv("get", "API_KEY")
+        assert code2 == 0
+        assert out2.strip() == "sk-secret-123"
+
+
+class TestPushAllAbort:
+    @pytest.fixture()
+    def push_ready(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        kv("init", "--env", "dev", input_text="dev")
+        (tmp_path / "services/api").mkdir(parents=True)
+        (tmp_path / "services/api/.env").write_text("A=1\n")
+        return tmp_path
+
+    def test_push_all_abort_on_no(self, push_ready):
+        out, err, code = kv("push", "--all", input_text="n")
+        assert code == 1
+        assert not (push_ready / "services/api/.env.dev.enc").exists()
+
+    def test_push_all_confirm_yes(self, push_ready):
+        out, err, code = kv("push", "--all", input_text="y")
+        assert code == 0
+        assert (push_ready / "services/api/.env.dev.enc").exists()
+
+
+class TestEnvFlag:
+    """Test --env flag on various commands."""
+
+    @pytest.fixture()
+    def multi_env(self, project):
+        # push to dev (already done by project fixture)
+        # now also push to staging
+        (project / ".env").write_text("API_KEY=staging-key\nSTAGING_ONLY=yes\n")
+        kv("push", "--env", "staging", "-y")
+        (project / ".env").unlink()
+        return project
+
+    def test_pull_env(self, multi_env):
+        out, err, code = kv("pull", "--env", "staging")
+        assert code == 0
+        env = (multi_env / ".env").read_text()
+        assert "API_KEY=staging-key" in env
+
+    def test_get_env(self, multi_env):
+        out, _, code = kv("get", "--env", "staging", "STAGING_ONLY")
+        assert code == 0
+        assert out.strip() == "yes"
+
+    def test_get_env_default_doesnt_have_staging_key(self, multi_env):
+        _, _, code = kv("get", "--env", "dev", "STAGING_ONLY")
+        assert code == 1
+
+    def test_list_env(self, multi_env):
+        out, _, code = kv("list", "--env", "staging", "--json")
+        assert code == 0
+        keys = json.loads(out)
+        assert "STAGING_ONLY" in keys
+
+    def test_set_env(self, multi_env):
+        kv("set", "--env", "staging", "NEW=added")
+        out, _, code = kv("get", "--env", "staging", "NEW")
+        assert code == 0
+        assert out.strip() == "added"
+        # dev should not have it
+        _, _, code2 = kv("get", "--env", "dev", "NEW")
+        assert code2 == 1
+
+    def test_delete_env(self, multi_env):
+        kv("delete", "--env", "staging", "STAGING_ONLY", "-y")
+        _, _, code = kv("get", "--env", "staging", "STAGING_ONLY")
+        assert code == 1
+
+    def test_diff_env(self, multi_env):
+        (multi_env / ".env").write_text("API_KEY=different\n")
+        out, _, code = kv("diff", "--env", "staging")
+        assert code == 0
+        assert "API_KEY" in out
+
+    def test_validate_env(self, multi_env):
+        (multi_env / ".env.example").write_text("API_KEY=\nSTAGING_ONLY=\n")
+        _, _, code = kv("validate", "--env", "staging")
+        assert code == 0
+
+    def test_rotate_env(self, multi_env):
+        _, _, code = kv("rotate", "--env", "staging")
+        assert code == 0
+        out, _, _ = kv("get", "--env", "staging", "API_KEY")
+        assert out.strip() == "staging-key"
+
+
+class TestDiffAllEdgeCases:
+    @pytest.fixture()
+    def monorepo_partial(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        kv("init", "--env", "dev", input_text="dev")
+        (tmp_path / "svc/a").mkdir(parents=True)
+        (tmp_path / "svc/b").mkdir(parents=True)
+        (tmp_path / "svc/a/.env").write_text("A=1\n")
+        (tmp_path / "svc/b/.env").write_text("B=2\n")
+        kv("push", "--all", "-y")
+        # only service a has a local .env, b does not
+        (tmp_path / "svc/b/.env").unlink()
+        return tmp_path
+
+    def test_diff_all_partial_env_text(self, monorepo_partial):
+        out, err, code = kv("diff", "--all")
+        assert code == 0
+        assert "no local .env" in out
+
+    def test_diff_all_partial_env_json(self, monorepo_partial):
+        out, err, code = kv("diff", "--all", "--json")
+        assert code == 0
+        data = json.loads(out)
+        # only service a should be in the output (b has no local .env)
+        assert len(data) == 1
+
+    def test_validate_all_skips_missing_template(self, monorepo_partial):
+        # only service a has a template
+        (monorepo_partial / "svc/a/.env.example").write_text("A=\n")
+        out, err, code = kv("validate", "--all")
+        assert code == 0
+        assert "skipping" in out.lower() or "no" in out.lower()
+
+
 class TestEdgeCI:
     def test_all_commands_with_sops_age_key(self, project):
         """Simulate CI: use SOPS_AGE_KEY env var instead of key file."""
