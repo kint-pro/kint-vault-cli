@@ -16,6 +16,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"regexp"
@@ -128,12 +129,15 @@ func computeMAC(secrets map[string]string, dataKey []byte) string {
 	sort.Strings(keys)
 
 	mac := hmac.New(sha256.New, dataKey)
+	lenBuf := make([]byte, 4)
 	for _, k := range keys {
 		kBytes := []byte(k)
 		vBytes := []byte(secrets[k])
-		mac.Write([]byte{byte(len(kBytes) >> 8), byte(len(kBytes))})
+		binary.BigEndian.PutUint32(lenBuf, uint32(len(kBytes)))
+		mac.Write(lenBuf)
 		mac.Write(kBytes)
-		mac.Write([]byte{byte(len(vBytes) >> 8), byte(len(vBytes))})
+		binary.BigEndian.PutUint32(lenBuf, uint32(len(vBytes)))
+		mac.Write(lenBuf)
 		mac.Write(vBytes)
 	}
 	return hex.EncodeToString(mac.Sum(nil))

@@ -37,8 +37,12 @@ func CmdEdit(envOverride string) {
 	tmpPath := tmpFile.Name()
 	defer os.Remove(tmpPath)
 
-	tmpFile.WriteString(envfile.Format(result.Secrets) + "\n")
-	tmpFile.Close()
+	if _, err := tmpFile.WriteString(envfile.Format(result.Secrets) + "\n"); err != nil {
+		fatal(err.Error())
+	}
+	if err := tmpFile.Close(); err != nil {
+		fatal(err.Error())
+	}
 	config.RestrictFile(tmpPath)
 
 	editor := os.Getenv("EDITOR")

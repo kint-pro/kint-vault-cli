@@ -4,51 +4,56 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-kint-vault is a single-file Python CLI for secrets management powered by SOPS + age. It encrypts `.env` files directly in the repo — no cloud service or infrastructure needed. The entire implementation lives in `kint_vault.py`.
+kint-vault is a Go CLI for secrets management powered by native AES-256-GCM encryption + age key wrapping. Single static binary, zero external dependencies. Encrypts `.env` files directly in the repo.
 
 ## Development Commands
 
 ```bash
-# Install in dev mode (with test dependencies)
-pip install -e ".[dev]"
+# Build
+make build
+# or
+go build -o kint-vault ./cmd/kint-vault/
 
-# Run all tests
-python3 -m pytest
+# Run unit tests
+go test ./...
 
-# Run only unit tests (mocked, no sops/age needed)
-python3 -m pytest test_kint_vault.py
+# Run integration tests (requires age key)
+bash test_integration.sh
 
-# Run only integration tests (requires sops + age on PATH)
-python3 -m pytest test_integration.py
-
-# Run a single test
-python3 -m pytest test_kint_vault.py::TestParseEnvParametrized::test_parse_env
-
-# Run the CLI directly
-python3 -m kint_vault --help
+# Run the CLI
+go run ./cmd/kint-vault/ --help
 ```
 
 ## Architecture
 
-Single-module CLI (`kint_vault.py`) with no internal packages. Entry point is `main()` which dispatches to `cmd_*` functions via `COMMANDS` dict and `argparse`.
+Entry point `cmd/kint-vault/main.go` parses flags and dispatches to `internal/commands/`.
 
-**Key layers in `kint_vault.py`:**
-- **Output helpers** (`ok`, `err`, `warn`, `info`): Colored terminal output respecting `NO_COLOR`
-- **Config** (`find_config`, `load_config`): Walks up directory tree to find `.kint-vault.yaml`
-- **Helpers**: `.env` parsing (`_parse_env`), diff formatting, path exclusion for monorepo traversal
-- **SOPS backend** (`sops_decrypt`, `sops_encrypt_file`, `sops_encrypt_content`): Shells out to `sops` CLI
-- **Commands** (`cmd_init`, `cmd_pull`, `cmd_push`, etc.): Each subcommand is a standalone function taking parsed args
+**Packages:**
+- **`internal/vault`** — Crypto core. Per-value AES-256-GCM with AAD (key name), 32-byte nonces, IV-stash for stable re-encryption, HMAC-SHA256 MAC (length-prefixed, encrypted)
+- **`internal/sopsbackend`** — Thin adapter between commands and vault. Handles decrypt-for-update (data key reuse) vs fresh encrypt
+- **`internal/commands`** — One file per subcommand. Uses `fatal()` for errors (fail fast, `os.Exit(1)`)
+- **`internal/config`** — Config loading (`.kint-vault.yaml`, `.sops.yaml`), age key file discovery, atomic writes
+- **`internal/envfile`** — `.env` parsing/formatting, diff computation
+- **`internal/output`** — Colored terminal output respecting `NO_COLOR`
 
-**External dependencies:** Only `pyyaml`. All crypto is delegated to `sops` and `age` binaries.
+**Data key lifecycle:**
+- `push` / `rotate` / `remove-recipient` → new data key (fresh `WriteEncryptedFile`)
+- `set` / `delete` / `edit` → reuse existing data key + IV-stash (`DecryptForUpdate` → `WriteEncryptedFileWithKey`). Only changed values get new ciphertext
 
-**Test structure:**
-- `test_kint_vault.py` — Unit tests with mocks and Hypothesis property-based tests. No external tools needed.
-- `test_integration.py` — End-to-end tests using real `sops`/`age` encryption. Uses a `project` fixture that creates a fresh encrypted project in `tmp_path`.
+**File format (`kv_` prefix):**
+```
+KEY=ENC[AES256_GCM,data:<b64>,iv:<b64>,tag:<b64>,type:str]
+kv_age_recipient_0=age1...
+kv_age_key=<age-armored wrapped data key>
+kv_mac=ENC[AES256_GCM,...]
+kv_version=1
+```
 
 ## Conventions
 
-- All errors use `raise SystemExit(...)` — fail fast, no exception hierarchies
-- File writes use `_atomic_write` (write to temp + `os.replace`) to prevent corruption
-- `.env` files are created with `0o600` permissions via `os.open` flags
-- Monorepo commands (`--all`) find files via `rglob` with `_is_excluded_path` filtering out dotdirs, `node_modules`, `__pycache__`, `.venv`
-- Config lookup walks parent directories (like git does)
+- Errors: `fatal()` calls `os.Exit(1)` — fail fast, no error returns in commands
+- File writes: `config.AtomicWrite` (temp + `os.Rename`) prevents corruption
+- `.env` files created with `0o600` permissions
+- Monorepo `--all` uses `filepath.Walk` with exclusions (dotdirs, `node_modules`, `__pycache__`, `.venv`)
+- Config lookup walks parent directories
+- Reserved `kv_` prefix rejected on `set` and `push`

@@ -7,8 +7,8 @@ BINARY  := kint-vault
 build:
 	go build -ldflags "$(LDFLAGS)" -o $(BINARY) ./cmd/kint-vault/
 
-test: build
-	python -m pytest test_integration.py -v
+test:
+	go test ./...
 
 clean:
 	rm -f $(BINARY)
