@@ -219,16 +219,36 @@ def _in_dir(directory: Path, func, *args, **kwargs):
         os.chdir(original)
 
 
+def _truncate(value: str, max_len: int = 40) -> str:
+    if len(value) <= max_len:
+        return value
+    return value[:max_len - 3] + "..."
+
+
 def _format_diff(local: dict, remote: dict) -> str:
     lines = []
+    color = _color_enabled()
     all_keys = sorted(set(local) | set(remote))
     for key in all_keys:
         if key in local and key not in remote:
-            lines.append(f"  - {key} (local only)")
+            val = _truncate(local[key])
+            line = f"  - {key}={val} (local only)"
+            if color:
+                line = f"  {C.RED}-{C.RESET} {key}={val} (local only)"
+            lines.append(line)
         elif key not in local and key in remote:
-            lines.append(f"  + {key} (remote only)")
+            val = _truncate(remote[key])
+            line = f"  + {key}={val} (remote only)"
+            if color:
+                line = f"  {C.GREEN}+{C.RESET} {key}={val} (remote only)"
+            lines.append(line)
         elif local[key] != remote[key]:
-            lines.append(f"  ~ {key} (modified)")
+            old_val = _truncate(local[key])
+            new_val = _truncate(remote[key])
+            line = f"  ~ {key}: {old_val} → {new_val}"
+            if color:
+                line = f"  {C.YELLOW}~{C.RESET} {key}: {old_val} → {new_val}"
+            lines.append(line)
     return "\n".join(lines) if lines else "No differences"
 
 
@@ -391,20 +411,6 @@ def cmd_init(args):
     print(ALIAS_HINT)
 
 
-def _show_overwritten(local: dict, remote: dict):
-    """Print values that will be lost during overwrite."""
-    lost = []
-    for key in sorted(local):
-        if key not in remote:
-            lost.append(f"  {key}={local[key]}")
-        elif local[key] != remote[key]:
-            lost.append(f"  {key}={local[key]}")
-    if lost:
-        warn("Overwritten local values:")
-        for line in lost:
-            print(line)
-
-
 def _pull_single(config: dict, enc_path: Path, output_path: Path, force: bool):
     content = _in_dir(enc_path.parent, sops_decrypt, config)
     data = (content + "\n").encode()
@@ -412,17 +418,19 @@ def _pull_single(config: dict, enc_path: Path, output_path: Path, force: bool):
     if resolved.exists():
         local_dict = _parse_env(resolved.read_text())
         remote_dict = _parse_env(content)
+        diff = _format_diff(local_dict, remote_dict)
+        if diff == "No differences":
+            info("No differences, skipping")
+            return
         if not force:
-            diff = _format_diff(local_dict, remote_dict)
-            if diff == "No differences":
-                info("No differences, skipping")
-                return
             warn(f"{output_path} already exists. Differences:")
             print(diff)
             answer = input("Overwrite local .env? [y/N] ").strip().lower()
             if answer != "y":
                 raise SystemExit("Aborted")
-        _show_overwritten(local_dict, remote_dict)
+        else:
+            warn("Overwriting. Differences:")
+            print(diff)
         fd = os.open(resolved, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     else:
         fd = os.open(resolved, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)

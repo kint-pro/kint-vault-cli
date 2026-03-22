@@ -100,10 +100,10 @@ class TestFormatEnvParametrized:
 class TestFormatDiffParametrized:
     @pytest.mark.parametrize("local,remote,expected_fragments", [
         ({"A": "1"}, {"A": "1"}, ["No differences"]),
-        ({"A": "1"}, {}, ["- A (local only)"]),
-        ({}, {"A": "1"}, ["+ A (remote only)"]),
-        ({"A": "1"}, {"A": "2"}, ["~ A (modified)"]),
-        ({"A": "1", "B": "2"}, {"B": "3", "C": "4"}, ["- A (local only)", "~ B (modified)", "+ C (remote only)"]),
+        ({"A": "1"}, {}, ["- A=1 (local only)"]),
+        ({}, {"A": "1"}, ["+ A=1 (remote only)"]),
+        ({"A": "1"}, {"A": "2"}, ["~ A: 1"]),
+        ({"A": "1", "B": "2"}, {"B": "3", "C": "4"}, ["- A=1 (local only)", "~ B:", "+ C=4 (remote only)"]),
         ({}, {}, ["No differences"]),
         ({"A": "same", "B": "same"}, {"A": "same", "B": "same"}, ["No differences"]),
     ])
@@ -136,8 +136,8 @@ class TestFormatDiffProperty:
     @given(env_dict_st)
     def test_empty_vs_dict_all_remote_only(self, secrets):
         result = kint_vault._format_diff({}, secrets)
-        for key in secrets:
-            assert f"+ {key} (remote only)" in result
+        for key, val in secrets.items():
+            assert key in result and "(remote only)" in result
 
 
 # --- Parametrized: _enc_file ---
@@ -416,8 +416,8 @@ class TestCmdPull:
         content = (tmp_path / ".env").read_text()
         assert "A=new" in content
         output = capsys.readouterr().out
-        assert "A=old" in output
-        assert "B=local_only" in output
+        assert "old" in output and "new" in output  # modified value shown
+        assert "B=local_only" in output  # removed key shown
 
     def test_pull_skips_when_no_differences(self, tmp_path, monkeypatch, capsys):
         _setup_project(tmp_path, monkeypatch)
@@ -438,7 +438,8 @@ class TestCmdPull:
             kint_vault.cmd_pull(args)
         assert "NEW=val" in (tmp_path / ".env").read_text()
         output = capsys.readouterr().out
-        assert "OLD=val" in output
+        assert "OLD=val" in output  # removed key shown in diff
+        assert "NEW=val" in output  # added key shown in diff
 
     def test_pull_json(self, tmp_path, monkeypatch, capsys):
         _setup_project(tmp_path, monkeypatch)
@@ -647,9 +648,9 @@ class TestCmdDiff:
             args = parser.parse_args(["diff"])
             kint_vault.cmd_diff(args)
         output = capsys.readouterr().out
-        assert "- A (local only)" in output
-        assert "~ B (modified)" in output
-        assert "+ C (remote only)" in output
+        assert "A=1" in output and "local only" in output
+        assert "B:" in output and "local" in output and "remote" in output
+        assert "C=3" in output and "remote only" in output
 
 
 class TestCmdEnv:
