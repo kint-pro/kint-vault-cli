@@ -416,8 +416,9 @@ class TestCmdPull:
         content = (tmp_path / ".env").read_text()
         assert "A=new" in content
         output = capsys.readouterr().out
-        assert "old" in output and "new" in output  # modified value shown
-        assert "B=local_only" in output  # removed key shown
+        assert "A=old" in output  # full previous value
+        assert "B=local_only" in output  # full previous value
+        assert "Previous local .env" in output
 
     def test_pull_skips_when_no_differences(self, tmp_path, monkeypatch, capsys):
         _setup_project(tmp_path, monkeypatch)
@@ -438,8 +439,8 @@ class TestCmdPull:
             kint_vault.cmd_pull(args)
         assert "NEW=val" in (tmp_path / ".env").read_text()
         output = capsys.readouterr().out
-        assert "OLD=val" in output  # removed key shown in diff
-        assert "NEW=val" in output  # added key shown in diff
+        assert "OLD=val" in output  # full previous value printed
+        assert "Previous local .env" in output
 
     def test_pull_json(self, tmp_path, monkeypatch, capsys):
         _setup_project(tmp_path, monkeypatch)

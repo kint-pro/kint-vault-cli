@@ -431,6 +431,8 @@ def _pull_single(config: dict, enc_path: Path, output_path: Path, force: bool):
         else:
             warn("Overwriting. Differences:")
             print(diff)
+        warn("Previous local .env:")
+        print(_format_env(local_dict))
         fd = os.open(resolved, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     else:
         fd = os.open(resolved, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
