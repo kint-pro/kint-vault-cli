@@ -214,25 +214,6 @@ class TestAgeKeyFileParametrized:
         assert str(result).endswith(".config/sops/age/keys.txt")
 
 
-# --- _find_all_enc_files ---
-
-
-class TestFindAllEncFiles:
-    def test_finds_enc_files(self, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)
-        (tmp_path / ".env.dev.enc").write_text("x")
-        (tmp_path / ".env.prod.enc").write_text("x")
-        (tmp_path / ".env").write_text("x")
-        (tmp_path / "other.txt").write_text("x")
-        result = kint_vault._find_all_enc_files()
-        names = [p.name for p in result]
-        assert names == [".env.dev.enc", ".env.prod.enc"]
-
-    def test_empty_dir(self, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)
-        assert kint_vault._find_all_enc_files() == []
-
-
 # --- run_cmd ---
 
 

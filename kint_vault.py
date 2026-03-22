@@ -32,32 +32,27 @@ def _color_enabled():
     return sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
 
 
-def ok(msg: str):
+def _msg(icon: str, color: str, fallback: str, msg: str, **kwargs):
     if _color_enabled():
-        print(f"{C.GREEN}✓{C.RESET} {msg}")
+        print(f"{color}{icon}{C.RESET} {msg}", **kwargs)
     else:
-        print(f"OK: {msg}")
+        print(f"{fallback}{msg}", **kwargs)
+
+
+def ok(msg: str):
+    _msg("✓", C.GREEN, "OK: ", msg)
 
 
 def err(msg: str):
-    if _color_enabled():
-        print(f"{C.RED}✗{C.RESET} {msg}", file=sys.stderr)
-    else:
-        print(f"ERROR: {msg}", file=sys.stderr)
+    _msg("✗", C.RED, "ERROR: ", msg, file=sys.stderr)
 
 
 def warn(msg: str):
-    if _color_enabled():
-        print(f"{C.YELLOW}⚠{C.RESET} {msg}")
-    else:
-        print(f"WARNING: {msg}")
+    _msg("⚠", C.YELLOW, "WARNING: ", msg)
 
 
 def info(msg: str):
-    if _color_enabled():
-        print(f"{C.BLUE}→{C.RESET} {msg}")
-    else:
-        print(msg)
+    _msg("→", C.BLUE, "", msg)
 
 
 # --- Config ---
@@ -186,10 +181,6 @@ def _format_env(secrets: dict[str, str]) -> str:
     return "\n".join(f"{k}={v}" for k, v in sorted(secrets.items()))
 
 
-def _find_all_enc_files() -> list[Path]:
-    return sorted(Path.cwd().glob(".env.*.enc"))
-
-
 def _find_all_env_files(root: Path) -> list[Path]:
     return sorted(p for p in root.rglob(".env") if not _is_excluded_path(p, root))
 
@@ -225,30 +216,21 @@ def _truncate(value: str, max_len: int = 40) -> str:
     return value[:max_len - 3] + "..."
 
 
+def _diff_line(symbol: str, color: str, text: str) -> str:
+    if _color_enabled():
+        return f"  {color}{symbol}{C.RESET} {text}"
+    return f"  {symbol} {text}"
+
+
 def _format_diff(local: dict, remote: dict) -> str:
     lines = []
-    color = _color_enabled()
-    all_keys = sorted(set(local) | set(remote))
-    for key in all_keys:
+    for key in sorted(set(local) | set(remote)):
         if key in local and key not in remote:
-            val = _truncate(local[key])
-            line = f"  - {key}={val} (local only)"
-            if color:
-                line = f"  {C.RED}-{C.RESET} {key}={val} (local only)"
-            lines.append(line)
+            lines.append(_diff_line("-", C.RED, f"{key}={_truncate(local[key])} (local only)"))
         elif key not in local and key in remote:
-            val = _truncate(remote[key])
-            line = f"  + {key}={val} (remote only)"
-            if color:
-                line = f"  {C.GREEN}+{C.RESET} {key}={val} (remote only)"
-            lines.append(line)
+            lines.append(_diff_line("+", C.GREEN, f"{key}={_truncate(remote[key])} (remote only)"))
         elif local[key] != remote[key]:
-            old_val = _truncate(local[key])
-            new_val = _truncate(remote[key])
-            line = f"  ~ {key}: {old_val} → {new_val}"
-            if color:
-                line = f"  {C.YELLOW}~{C.RESET} {key}: {old_val} → {new_val}"
-            lines.append(line)
+            lines.append(_diff_line("~", C.YELLOW, f"{key}: {_truncate(local[key])} → {_truncate(remote[key])}"))
     return "\n".join(lines) if lines else "No differences"
 
 
