@@ -223,6 +223,13 @@ def _truncate(value: str, max_len: int = 40) -> str:
     return value[:max_len - 3] + "..."
 
 
+def _diff_data(local: dict, remote: dict) -> dict:
+    added = {k: remote[k] for k in sorted(set(remote) - set(local))}
+    removed = {k: local[k] for k in sorted(set(local) - set(remote))}
+    modified = {k: {"local": local[k], "remote": remote[k]} for k in sorted(set(local) & set(remote)) if local[k] != remote[k]}
+    return {"added": added, "removed": removed, "modified": modified}
+
+
 def _diff_line(symbol: str, color: str, text: str) -> str:
     if _color_enabled():
         return f"  {color}{symbol}{C.RESET} {text}"
@@ -603,27 +610,37 @@ def cmd_diff(args):
         enc_files = _find_all_enc_files_recursive(root, env_name)
         if not enc_files:
             raise SystemExit(f"No .env.{env_name}.enc files found")
+        all_results = {}
         for enc in enc_files:
             local = enc.parent / ".env"
             label = str(enc.parent.relative_to(root))
             if not local.exists():
-                info(f"{label}: no local .env")
+                if not args.json:
+                    info(f"{label}: no local .env")
                 continue
             local_dict = _parse_env(local.read_text())
             remote_dict = _parse_env(sops_decrypt(config, enc.parent))
-            result = _format_diff(local_dict, remote_dict)
-            if result == "No differences":
-                ok(f"{label}: no differences")
+            if args.json:
+                all_results[label] = _diff_data(local_dict, remote_dict)
             else:
-                info(f"{label}:")
-                print(result)
+                result = _format_diff(local_dict, remote_dict)
+                if result == "No differences":
+                    ok(f"{label}: no differences")
+                else:
+                    info(f"{label}:")
+                    print(result)
+        if args.json:
+            print(json.dumps(all_results, indent=2))
         return
     local_path = Path(".env")
     if not local_path.exists():
         raise SystemExit("No local .env file to diff against")
     local_dict = _parse_env(local_path.read_text())
     remote_dict = _parse_env(sops_decrypt(config))
-    print(_format_diff(local_dict, remote_dict))
+    if args.json:
+        print(json.dumps(_diff_data(local_dict, remote_dict), indent=2))
+    else:
+        print(_format_diff(local_dict, remote_dict))
 
 
 def cmd_edit(args):
@@ -712,11 +729,13 @@ def cmd_remove_recipient(args):
     info("Removed recipients can still decrypt old versions from git history")
 
 
-def _validate_single(config: dict, enc_dir: Path, template_path: Path, strict: bool, label: str) -> bool:
+def _validate_single(config: dict, enc_dir: Path, template_path: Path, strict: bool, label: str, as_json: bool = False):
     required = set(_parse_env(template_path.read_text()).keys())
     remote_keys = set(_parse_env(sops_decrypt(config, enc_dir)).keys())
     missing = sorted(required - remote_keys)
     extra = sorted(remote_keys - required) if strict else []
+    if as_json:
+        return {"valid": not missing and not extra, "missing": missing, "extra": extra}
     if not missing and not extra:
         ok(f"{label}: all {len(required)} keys present")
         return True
@@ -740,15 +759,24 @@ def cmd_validate(args):
         enc_files = _find_all_enc_files_recursive(root, env_name)
         if not enc_files:
             raise SystemExit(f"No .env.{env_name}.enc files found")
+        all_results = {}
         all_ok = True
         for enc in enc_files:
             template = enc.parent / (args.template or ENV_EXAMPLE)
             label = str(enc.parent.relative_to(root))
             if not template.exists():
-                info(f"{label}: no {template.name}, skipping")
+                if not args.json:
+                    info(f"{label}: no {template.name}, skipping")
                 continue
-            if not _validate_single(config, enc.parent, template, args.strict, label):
-                all_ok = False
+            if args.json:
+                all_results[label] = _validate_single(config, enc.parent, template, args.strict, label, as_json=True)
+                if not all_results[label]["valid"]:
+                    all_ok = False
+            else:
+                if not _validate_single(config, enc.parent, template, args.strict, label):
+                    all_ok = False
+        if args.json:
+            print(json.dumps(all_results, indent=2))
         if not all_ok:
             raise SystemExit(1)
         return
@@ -756,6 +784,13 @@ def cmd_validate(args):
     template = args.template or ENV_EXAMPLE
     if not Path(template).exists():
         raise SystemExit(f"Template not found: {template}. Create a {ENV_EXAMPLE} with required keys")
+
+    if args.json:
+        result = _validate_single(config, Path.cwd(), Path(template), args.strict, _enc_file(config), as_json=True)
+        print(json.dumps(result, indent=2))
+        if not result["valid"]:
+            raise SystemExit(1)
+        return
 
     if not _validate_single(config, Path.cwd(), Path(template), args.strict, _enc_file(config)):
         raise SystemExit(1)
@@ -884,6 +919,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("diff", help="Show local vs encrypted differences")
     p.add_argument("--env")
+    p.add_argument("--json", action="store_true", help="Output as JSON")
     p.add_argument("--all", action="store_true", help="Diff all services in monorepo")
 
     p = sub.add_parser("edit", help="Edit encrypted secrets in $EDITOR")
@@ -903,6 +939,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--env")
     p.add_argument("--template", "-t", help=f"Template file (default: {ENV_EXAMPLE})")
     p.add_argument("--strict", action="store_true", help="Fail on extra keys too")
+    p.add_argument("--json", action="store_true", help="Output as JSON")
     p.add_argument("--all", action="store_true", help="Validate all services in monorepo")
 
     p = sub.add_parser("doctor", help="Check setup and connectivity")
