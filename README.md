@@ -96,7 +96,9 @@ kint-vault doctor
 ### Setup a project
 
 ```bash
-kint-vault init
+kint-vault init                    # interactive setup
+kint-vault init --env production   # set default environment
+kint-vault init --force            # overwrite existing config
 ```
 
 This creates:
@@ -110,12 +112,16 @@ This creates:
 ### Pull secrets
 
 ```bash
-kint-vault pull                    # decrypt → .env (fails if .env exists)
-kint-vault pull --force            # overwrite existing .env
+kint-vault pull                    # decrypt → .env (shows diff + confirms if .env exists)
+kint-vault pull --force            # overwrite without confirmation
+kint-vault pull --all              # decrypt all services (monorepo)
 kint-vault pull -o .env.local      # custom output file
 kint-vault pull --json             # JSON to stdout
+kint-vault pull --stdout           # plain text to stdout
 kint-vault pull --env production   # decrypt .env.production.enc
 ```
+
+If `.env` already exists, `pull` shows a colored diff and asks before overwriting. On overwrite, the previous values are printed so you can copy them if needed.
 
 ### Push secrets
 
@@ -123,6 +129,7 @@ kint-vault pull --env production   # decrypt .env.production.enc
 kint-vault push                    # encrypt .env (with confirmation)
 kint-vault push -y                 # skip confirmation
 kint-vault push -f .env.staging    # encrypt specific file
+kint-vault push --all              # encrypt all .env files (monorepo)
 ```
 
 ### Run with secrets
@@ -137,7 +144,8 @@ kint-vault run --env production -- npm start
 ```bash
 kint-vault set API_KEY=sk-123 DB_HOST=localhost
 kint-vault get API_KEY
-kint-vault delete API_KEY OLD_KEY
+kint-vault delete API_KEY OLD_KEY     # confirms before deleting
+kint-vault delete API_KEY -y          # skip confirmation
 kint-vault list
 kint-vault list --json
 ```
@@ -166,19 +174,23 @@ Then validate:
 kint-vault validate                   # check all keys exist
 kint-vault validate --strict          # also flag extra keys not in template
 kint-vault validate -t .env.required  # custom template file
+kint-vault validate --all             # all services (monorepo)
 ```
 
 ### Diff local vs encrypted
 
 ```bash
-kint-vault diff
+kint-vault diff                    # single project
+kint-vault diff --all              # all services (monorepo)
 ```
 
 ```
-  + NEW_KEY (remote only)
-  - OLD_KEY (local only)
-  ~ API_KEY (modified)
+  + NEW_KEY=value (remote only)
+  - OLD_KEY=value (local only)
+  ~ API_KEY: old_value → new_value
 ```
+
+Output is colored in terminals (`+` green, `-` red, `~` yellow). Long values are truncated.
 
 ### Switch environments
 
@@ -192,7 +204,8 @@ Environments map to encrypted files: `dev` → `.env.dev.enc`, `production` → 
 ### Rotate encryption key
 
 ```bash
-kint-vault rotate
+kint-vault rotate                  # single project
+kint-vault rotate --all            # all services (monorepo)
 ```
 
 Generates a new data encryption key and re-encrypts all values. Use after removing a team member.
@@ -256,6 +269,19 @@ git commit -m "remove developer from vault"
 
 This updates the encryption keys AND rotates the data key. The removed developer can still decrypt old versions from git history — rotate actual secret values if needed.
 
+## Monorepo
+
+Commands with `--all` find all `.env.{env}.enc` files recursively and operate on each service independently:
+
+```bash
+kint-vault pull --all              # decrypt all services
+kint-vault push --all              # encrypt all services
+kint-vault diff --all              # diff all services
+kint-vault validate --all          # validate all services
+kint-vault rotate --all            # rotate keys for all services
+kint-vault list --all              # list keys for all services
+```
+
 ## Configuration
 
 ### `.kint-vault.yaml`
@@ -273,6 +299,21 @@ env: dev
 | `env` | Default environment (dev, staging, production) |
 
 Every command accepts `--env` to override the default environment.
+
+### Environment variables
+
+| Variable | Description |
+|----------|-------------|
+| `SOPS_AGE_KEY_FILE` | Override age key location (default: `~/.config/sops/age/keys.txt`) |
+| `NO_COLOR` | Disable colored output |
+
+### Alias
+
+After `kint-vault init` a shell alias is suggested:
+
+```bash
+alias kv="kint-vault"
+```
 
 ### `.sops.yaml`
 
