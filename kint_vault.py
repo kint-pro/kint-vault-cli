@@ -404,6 +404,8 @@ def _pull_single(config: dict, enc_path: Path, output_path: Path, force: bool):
     content = sops_decrypt(config, enc_path.parent)
     data = (content + "\n").encode()
     resolved = output_path.resolve()
+    if not resolved.parent.exists():
+        raise SystemExit(f"Directory does not exist: {resolved.parent}")
     if resolved.exists():
         local_dict = _parse_env(resolved.read_text())
         remote_dict = _parse_env(content)
