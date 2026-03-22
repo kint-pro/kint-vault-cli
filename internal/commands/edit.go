@@ -3,10 +3,10 @@ package commands
 import (
 	"fmt"
 	"os"
+	"os/exec"
 
 	"github.com/kint-pro/kint-vault-cli/internal/config"
 	"github.com/kint-pro/kint-vault-cli/internal/output"
-	"github.com/kint-pro/kint-vault-cli/internal/sopsbackend"
 )
 
 func CmdEdit(envOverride string) {
@@ -20,11 +20,17 @@ func CmdEdit(envOverride string) {
 		fatal(fmt.Sprintf("No encrypted secrets: %s", enc))
 	}
 
-	_, err = sopsbackend.RunCmd([]string{
-		"sops", "edit", "--input-type", "dotenv", "--output-type", "dotenv", enc,
-	}, false)
+	cmd := exec.Command("sops", "edit", "--input-type", "dotenv", "--output-type", "dotenv", enc)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	err = cmd.Run()
 	if err != nil {
-		fatal(fmt.Sprintf("Edit failed (%v)", err))
+		exitCode := 1
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		}
+		fatal(fmt.Sprintf("Edit failed (exit %d)", exitCode))
 	}
 	output.Ok(fmt.Sprintf("Saved %s", enc))
 }

@@ -19,9 +19,9 @@ func RunCmd(cmd []string, capture bool) (string, error) {
 		err := c.Run()
 		if err != nil {
 			if exitErr, ok := err.(*exec.ExitError); ok {
-				return "", fmt.Errorf("command failed: %s exited with code %d", cmd[0], exitErr.ExitCode())
+				return "", fmt.Errorf("Command failed: %s exited with code %d", cmd[0], exitErr.ExitCode())
 			}
-			return "", fmt.Errorf("command not found: %s. Is it installed?", cmd[0])
+			return "", fmt.Errorf("Command not found: %s. Is it installed?", cmd[0])
 		}
 		return "", nil
 	}
@@ -29,9 +29,9 @@ func RunCmd(cmd []string, capture bool) (string, error) {
 	out, err := c.Output()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("command failed: %s exited with code %d", cmd[0], exitErr.ExitCode())
+			return "", fmt.Errorf("Command failed: %s exited with code %d", cmd[0], exitErr.ExitCode())
 		}
-		return "", fmt.Errorf("command not found: %s. Is it installed?", cmd[0])
+		return "", fmt.Errorf("Command not found: %s. Is it installed?", cmd[0])
 	}
 	return strings.TrimSpace(string(out)), nil
 }

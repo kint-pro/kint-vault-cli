@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/kint-pro/kint-vault-cli/internal/envfile"
@@ -83,7 +84,7 @@ func mergeKeyMaps(a, b map[string]string) map[string]string {
 	return merged
 }
 
-// findAllEncFilesRecursive finds all .env.{env}.enc files under root.
+// findAllEncFilesRecursive finds all .env.{env}.enc files under root (sorted).
 func findAllEncFilesRecursive(root, env string) []string {
 	pattern := fmt.Sprintf(".env.%s.enc", env)
 	var results []string
@@ -99,10 +100,11 @@ func findAllEncFilesRecursive(root, env string) []string {
 		}
 		return nil
 	})
+	sort.Strings(results)
 	return results
 }
 
-// findAllEnvFiles finds all .env files under root (not .env.*).
+// findAllEnvFiles finds all .env files under root (not .env.*, sorted).
 func findAllEnvFiles(root string) []string {
 	var results []string
 	filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
@@ -117,10 +119,11 @@ func findAllEnvFiles(root string) []string {
 		}
 		return nil
 	})
+	sort.Strings(results)
 	return results
 }
 
-// findAllEncFilesAnyEnv finds all .env.*.enc files under root.
+// findAllEncFilesAnyEnv finds all .env.*.enc files under root (sorted).
 func findAllEncFilesAnyEnv(root string) []string {
 	var results []string
 	filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
@@ -136,5 +139,6 @@ func findAllEncFilesAnyEnv(root string) []string {
 		}
 		return nil
 	})
+	sort.Strings(results)
 	return results
 }
