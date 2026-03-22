@@ -31,10 +31,7 @@ func CmdRotate(envOverride string, all bool) {
 			fatal(fmt.Sprintf("No .env.%s.enc files found", envName))
 		}
 		for _, enc := range encFiles {
-			_, err := sopsbackend.RunCmd([]string{
-				"sops", "rotate", "--input-type", "dotenv", "--output-type", "dotenv", "-i", enc,
-			}, true)
-			if err != nil {
+			if err := sopsbackend.ReEncrypt(cfg, enc); err != nil {
 				fatal(err.Error())
 			}
 			rel, _ := filepath.Rel(root, enc)
@@ -47,10 +44,7 @@ func CmdRotate(envOverride string, all bool) {
 	if _, err := os.Stat(enc); os.IsNotExist(err) {
 		fatal(fmt.Sprintf("No encrypted secrets: %s", enc))
 	}
-	_, err = sopsbackend.RunCmd([]string{
-		"sops", "rotate", "--input-type", "dotenv", "--output-type", "dotenv", "-i", enc,
-	}, true)
-	if err != nil {
+	if err := sopsbackend.ReEncrypt(cfg, enc); err != nil {
 		fatal(err.Error())
 	}
 	output.Ok(fmt.Sprintf("Rotated data key for %s", enc))

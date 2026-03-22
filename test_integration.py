@@ -114,7 +114,7 @@ class TestSmokePush:
         out, err, code = kv("push", "-y")
         assert code == 0
         enc = (project / ".env.dev.enc").read_text()
-        assert "ENC[" in enc
+        assert "BEGIN AGE ENCRYPTED FILE" in enc or "ENC[" in enc
 
     def test_push_custom_file(self, project):
         (project / "custom.env").write_text("X=1\n")
@@ -691,11 +691,9 @@ class TestEdit:
         assert code == 1
         assert "No encrypted secrets" in (out + err)
 
-    def test_edit_runs_sops(self, project):
-        # sops edit needs a terminal, so we just verify it doesn't crash before calling sops
-        # EDITOR=true makes sops edit succeed without interaction
+    def test_edit_runs_editor(self, project):
+        # EDITOR=true makes edit succeed without interaction (true exits 0)
         out, err, code = kv("edit", env={"EDITOR": "true"})
-        # sops may fail without a proper terminal, but it should not be a python crash
         assert code == 0 or "Edit failed" in (out + err)
 
 

@@ -52,16 +52,14 @@ func CmdAddRecipient(pubkey string) {
 	}
 	output.Ok(fmt.Sprintf("Added recipient: %s", truncated))
 
+	// Re-encrypt all files with updated recipients
 	configPath, err := config.FindConfigPath()
 	if err != nil {
 		fatal(err.Error())
 	}
 	root := filepath.Dir(configPath)
 	for _, enc := range findAllEncFilesAnyEnv(root) {
-		_, err := sopsbackend.RunCmd([]string{
-			"sops", "updatekeys", "--input-type", "dotenv", "-y", enc,
-		}, true)
-		if err != nil {
+		if err := sopsbackend.ReEncrypt(nil, enc); err != nil {
 			fatal(err.Error())
 		}
 		rel, _ := filepath.Rel(root, enc)
@@ -116,22 +114,14 @@ func CmdRemoveRecipient(pubkey string) {
 	}
 	output.Ok(fmt.Sprintf("Removed recipient: %s", truncated))
 
+	// Re-encrypt all files with updated recipients (also rotates data key)
 	configPath, err := config.FindConfigPath()
 	if err != nil {
 		fatal(err.Error())
 	}
 	root := filepath.Dir(configPath)
 	for _, enc := range findAllEncFilesAnyEnv(root) {
-		_, err := sopsbackend.RunCmd([]string{
-			"sops", "updatekeys", "--input-type", "dotenv", "-y", enc,
-		}, true)
-		if err != nil {
-			fatal(err.Error())
-		}
-		_, err = sopsbackend.RunCmd([]string{
-			"sops", "rotate", "--input-type", "dotenv", "--output-type", "dotenv", "-i", enc,
-		}, true)
-		if err != nil {
+		if err := sopsbackend.ReEncrypt(nil, enc); err != nil {
 			fatal(err.Error())
 		}
 		rel, _ := filepath.Rel(root, enc)

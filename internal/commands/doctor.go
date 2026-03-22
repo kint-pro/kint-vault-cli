@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"filippo.io/age"
 	"github.com/kint-pro/kint-vault-cli/internal/config"
 	"github.com/kint-pro/kint-vault-cli/internal/envfile"
 	"github.com/kint-pro/kint-vault-cli/internal/output"
@@ -22,35 +23,33 @@ func CmdDoctor(envOverride string) {
 	checks = append(checks, output.Check{
 		Name:   fmt.Sprintf("Config file (%s)", config.ConfigFile),
 		Passed: true,
-		Detail: "sops",
+		Detail: "age",
 	})
 
-	sopsVersion, err := sopsbackend.RunCmd([]string{"sops", "--version", "--disable-version-check"}, true)
-	if err != nil {
-		checks = append(checks, output.Check{Name: "sops installed", Passed: false, Detail: config.InstallHint("sops")})
-		output.PrintChecks(checks)
-		os.Exit(1)
-	}
-	checks = append(checks, output.Check{Name: "sops installed", Passed: true, Detail: sopsVersion})
-
-	_, err = sopsbackend.RunCmd([]string{"age", "--version"}, true)
-	if err != nil {
-		checks = append(checks, output.Check{Name: "age installed", Passed: false, Detail: config.InstallHint("age")})
-		output.PrintChecks(checks)
-		os.Exit(1)
-	}
-	checks = append(checks, output.Check{Name: "age installed", Passed: true})
-
+	// Check age key
 	ageKeyEnv := os.Getenv("SOPS_AGE_KEY")
 	keyFile := config.AgeKeyFile()
 	var pubkey string
 
 	if ageKeyEnv != "" {
-		prefix := "# public key: "
-		for _, line := range strings.Split(ageKeyEnv, "\n") {
-			if strings.HasPrefix(line, prefix) {
-				pubkey = strings.TrimSpace(line[len(prefix):])
-				break
+		// Try to parse identity from env var to extract public key
+		identities, err := age.ParseIdentities(strings.NewReader(ageKeyEnv))
+		if err == nil {
+			for _, id := range identities {
+				if x, ok := id.(*age.X25519Identity); ok {
+					pubkey = x.Recipient().String()
+					break
+				}
+			}
+		}
+		if pubkey == "" {
+			// Fallback: look for comment line
+			prefix := "# public key: "
+			for _, line := range strings.Split(ageKeyEnv, "\n") {
+				if strings.HasPrefix(line, prefix) {
+					pubkey = strings.TrimSpace(line[len(prefix):])
+					break
+				}
 			}
 		}
 		detail := "set"
@@ -61,7 +60,6 @@ func CmdDoctor(envOverride string) {
 		}
 		checks = append(checks, output.Check{Name: "age key (SOPS_AGE_KEY)", Passed: true, Detail: detail})
 	} else if _, err := os.Stat(keyFile); err == nil {
-		var err error
 		pubkey, err = config.ReadAgePubkey(keyFile)
 		if err != nil {
 			fatal(err.Error())

@@ -3,11 +3,12 @@ package commands
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"filippo.io/age"
 	"github.com/kint-pro/kint-vault-cli/internal/config"
 	"github.com/kint-pro/kint-vault-cli/internal/output"
-	"github.com/kint-pro/kint-vault-cli/internal/sopsbackend"
 	"gopkg.in/yaml.v3"
 )
 
@@ -31,22 +32,28 @@ func CmdInit(env string, force bool) {
 		}
 		output.Info("Using existing age key")
 	} else {
-		if err := os.MkdirAll(keyFile[:len(keyFile)-len("/keys.txt")], 0o700); err != nil {
+		// Generate age key natively
+		identity, err := age.GenerateX25519Identity()
+		if err != nil {
+			fatal(fmt.Sprintf("Failed to generate age key: %v", err))
+		}
+		pubkey = identity.Recipient().String()
+
+		dir := filepath.Dir(keyFile)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
 			fatal(fmt.Sprintf("Failed to create key directory: %v", err))
 		}
-		_, err := sopsbackend.RunCmd([]string{"age-keygen", "-o", keyFile}, true)
-		if err != nil {
-			fatal(fmt.Sprintf("Failed to generate age key. Is age installed?\nRun: kint-vault doctor"))
+
+		keyContent := fmt.Sprintf("# created: by kint-vault\n# public key: %s\n%s\n",
+			pubkey, identity.String())
+		if err := os.WriteFile(keyFile, []byte(keyContent), 0o600); err != nil {
+			fatal(fmt.Sprintf("Failed to write key file: %v", err))
 		}
 		config.RestrictFile(keyFile)
-		pubkey, err = config.ReadAgePubkey(keyFile)
-		if err != nil {
-			fatal(err.Error())
-		}
 		output.Ok("Generated age key")
 	}
 
-	cfg := &config.Config{Backend: "sops", Env: env}
+	cfg := &config.Config{Backend: "age", Env: env}
 	data, _ := yaml.Marshal(cfg)
 	if err := os.WriteFile(configPath, data, 0o644); err != nil {
 		fatal(err.Error())
@@ -54,7 +61,7 @@ func CmdInit(env string, force bool) {
 
 	sopsPath := config.SopsConfig
 	if _, err := os.Stat(sopsPath); err == nil {
-		// existing .sops.yaml
+		// existing .sops.yaml — preserve recipients
 		sopsData, err := os.ReadFile(sopsPath)
 		if err != nil {
 			fatal(err.Error())
@@ -64,9 +71,9 @@ func CmdInit(env string, force bool) {
 			fatal(err.Error())
 		}
 		if len(existing.CreationRules) > 0 {
-			age := existing.CreationRules[0].Age
+			ageStr := existing.CreationRules[0].Age
 			var recipients []string
-			for _, r := range strings.Split(age, ",") {
+			for _, r := range strings.Split(ageStr, ",") {
 				r = strings.TrimSpace(r)
 				if r != "" {
 					recipients = append(recipients, r)
@@ -130,7 +137,7 @@ func CmdInit(env string, force bool) {
 		output.Info("Created .gitignore")
 	}
 
-	output.Ok(fmt.Sprintf("Initialized (sops+age, env: %s)", env))
+	output.Ok(fmt.Sprintf("Initialized (age, env: %s)", env))
 	output.Info(fmt.Sprintf("Your public key: %s", pubkey))
 	output.Info("Share this key with your team to be added as recipient")
 	fmt.Println(aliasHint)

@@ -1,8 +1,8 @@
 # kint-vault
 
-Unified secrets management CLI powered by [SOPS](https://github.com/getsops/sops) + [age](https://github.com/FiloSottile/age).
+Unified secrets management CLI powered by [age](https://github.com/FiloSottile/age) encryption.
 
-Stop copying `.env` files manually. `kint-vault` encrypts secrets directly in your repo — no cloud service, no login, no infrastructure.
+Single binary, zero dependencies. Encrypts secrets directly in your repo — no cloud service, no login, no infrastructure.
 
 ## Quick Start
 
@@ -16,48 +16,23 @@ That's it. If this is a new project, see [Setup a project](#setup-a-project) bel
 
 ## Installation
 
-Single binary, no dependencies (sops and age are still required on PATH):
+Single static binary — no runtime dependencies:
 
 ```bash
 # from source (requires Go 1.21+)
 git clone https://github.com/kint-pro/kint-vault-cli.git
 cd kint-vault-cli
-go build -o kint-vault ./cmd/kint-vault/
+make build
 sudo mv kint-vault /usr/local/bin/
 
 # or install directly
 go install github.com/kint-pro/kint-vault-cli/cmd/kint-vault@latest
 ```
 
-### Prerequisites
-
-sops and age must be installed separately:
-
-**macOS:**
-```bash
-brew install sops age
-```
-
-**Linux (Debian/Ubuntu):**
-```bash
-sudo apt install age
-curl -LO https://github.com/getsops/sops/releases/download/v3.12.2/sops_3.12.2_amd64.deb
-sudo dpkg -i sops_3.12.2_amd64.deb
-```
-
-Check [SOPS releases](https://github.com/getsops/sops/releases) for the latest version.
-
-**Windows:**
-```powershell
-winget install Mozilla.SOPS FiloSottile.age
-```
-
 Verify:
 
 ```bash
 kint-vault --version
-sops --version
-age --version
 kint-vault doctor
 ```
 
@@ -147,7 +122,7 @@ kint-vault list --json
 kint-vault edit
 ```
 
-SOPS decrypts → opens `$EDITOR` → re-encrypts on save. The decrypted content never touches disk.
+Decrypts → opens `$EDITOR` → re-encrypts on save.
 
 ### Validate secrets
 
@@ -201,7 +176,7 @@ kint-vault rotate                  # single project
 kint-vault rotate --all            # all services (monorepo)
 ```
 
-Generates a new data encryption key and re-encrypts all values. Use after removing a team member.
+Re-encrypts all values with fresh encryption. Use after removing a team member.
 
 ### Diagnose issues
 
@@ -210,9 +185,7 @@ kint-vault doctor
 ```
 
 ```
-  ✓ Config file (.kint-vault.yaml) (sops)
-  ✓ sops installed (sops 3.12.2)
-  ✓ age installed
+  ✓ Config file (.kint-vault.yaml) (age)
   ✓ age key exists (age1abc123...)
   ✓ .sops.yaml valid (3 recipients)
   ✓ Your key in recipients
@@ -260,7 +233,7 @@ git add .sops.yaml .env.*.enc
 git commit -m "remove developer from vault"
 ```
 
-This updates the encryption keys AND rotates the data key. The removed developer can still decrypt old versions from git history — rotate actual secret values if needed.
+This re-encrypts all files for the remaining recipients. The removed developer can still decrypt old versions from git history — rotate actual secret values if needed.
 
 ## Monorepo
 
@@ -319,13 +292,13 @@ All commands work with `SOPS_AGE_KEY` — no key file needed. Use `--force`, `-y
 Lives in your project root. Commit to git.
 
 ```yaml
-backend: sops
+backend: age
 env: dev
 ```
 
 | Field | Description |
 |-------|-------------|
-| `backend` | `sops` |
+| `backend` | `age` |
 | `env` | Default environment (dev, staging, production) |
 
 Every command accepts `--env` to override the default environment.
@@ -361,20 +334,20 @@ creation_rules:
 
 ### Encrypted files
 
-Encrypted files (`.env.dev.enc`, `.env.production.enc`) are committed to git. They contain keys in cleartext and values encrypted with AES-256-GCM:
+Encrypted files (`.env.dev.enc`, `.env.production.enc`) are committed to git. They are age-encrypted (armored PEM format):
 
 ```
-API_KEY=ENC[AES256_GCM,data:abc...,iv:...,tag:...,type:str]
-DB_HOST=ENC[AES256_GCM,data:xyz...,iv:...,tag:...,type:str]
+-----BEGIN AGE ENCRYPTED FILE-----
+YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+...
+-----END AGE ENCRYPTED FILE-----
 ```
 
 ## How It Works
 
 1. Each developer has an **age key pair** (private key stays local, public key shared)
-2. SOPS generates a random **data key** (AES-256) to encrypt secret values
-3. The data key is encrypted with **every recipient's public key** and stored in the file
-4. Any recipient can decrypt the data key with their private key → decrypt the values
-5. Adding/removing recipients only changes who can decrypt the data key, not the values themselves
+2. `kint-vault push` encrypts the entire `.env` content with **every recipient's public key**
+3. Any recipient can decrypt with their private key
+4. Adding/removing recipients re-encrypts the file for the updated recipient list
 
 ## License
 
