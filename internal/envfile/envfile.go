@@ -42,16 +42,6 @@ func Format(secrets map[string]string) string {
 	return strings.Join(lines, "\n")
 }
 
-func Truncate(value string, maxLen int) string {
-	if maxLen <= 0 {
-		maxLen = 40
-	}
-	if len(value) <= maxLen {
-		return value
-	}
-	return value[:maxLen-3] + "..."
-}
-
 func SortedKeys(m map[string]string) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {

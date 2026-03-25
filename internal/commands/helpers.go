@@ -58,13 +58,13 @@ func formatDiff(local, remote map[string]string) string {
 		rv, inRemote := remote[key]
 		if inLocal && !inRemote {
 			lines = append(lines, output.DiffLine("-", output.Red,
-				fmt.Sprintf("%s=%s (local only)", key, envfile.Truncate(lv, 40))))
+				fmt.Sprintf("%s=%s (local only)", key, lv)))
 		} else if !inLocal && inRemote {
 			lines = append(lines, output.DiffLine("+", output.Green,
-				fmt.Sprintf("%s=%s (remote only)", key, envfile.Truncate(rv, 40))))
+				fmt.Sprintf("%s=%s (remote only)", key, rv)))
 		} else if lv != rv {
 			lines = append(lines, output.DiffLine("~", output.Yellow,
-				fmt.Sprintf("%s: %s → %s", key, envfile.Truncate(lv, 40), envfile.Truncate(rv, 40))))
+				fmt.Sprintf("%s: %s → %s", key, lv, rv)))
 		}
 	}
 	if len(lines) == 0 {

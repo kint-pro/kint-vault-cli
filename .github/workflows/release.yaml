@@ -24,3 +24,91 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+  update-formula:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract version
+        id: version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Download checksums
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          curl -fsSL "https://github.com/kint-pro/kint-vault-cli/releases/download/${TAG}/checksums.txt" -o checksums.txt
+          cat checksums.txt
+
+      - name: Extract checksums
+        id: sha
+        run: |
+          echo "darwin_arm64=$(grep 'darwin_arm64.tar.gz' checksums.txt | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "darwin_amd64=$(grep 'darwin_amd64.tar.gz' checksums.txt | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "linux_arm64=$(grep 'linux_arm64.tar.gz' checksums.txt | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "linux_amd64=$(grep 'linux_amd64.tar.gz' checksums.txt | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+
+      - name: Generate formula
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA_DARWIN_ARM64: ${{ steps.sha.outputs.darwin_arm64 }}
+          SHA_DARWIN_AMD64: ${{ steps.sha.outputs.darwin_amd64 }}
+          SHA_LINUX_ARM64: ${{ steps.sha.outputs.linux_arm64 }}
+          SHA_LINUX_AMD64: ${{ steps.sha.outputs.linux_amd64 }}
+        run: |
+          cat > kint-vault.rb << EOF
+          class KintVault < Formula
+            desc "Secrets management CLI — encrypt .env files directly in your repo"
+            homepage "https://github.com/kint-pro/kint-vault-cli"
+            version "${VERSION}"
+            license "Apache-2.0"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/kint-pro/kint-vault-cli/releases/download/v${VERSION}/kint-vault-cli_${VERSION}_darwin_arm64.tar.gz"
+                sha256 "${SHA_DARWIN_ARM64}"
+              end
+              on_intel do
+                url "https://github.com/kint-pro/kint-vault-cli/releases/download/v${VERSION}/kint-vault-cli_${VERSION}_darwin_amd64.tar.gz"
+                sha256 "${SHA_DARWIN_AMD64}"
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url "https://github.com/kint-pro/kint-vault-cli/releases/download/v${VERSION}/kint-vault-cli_${VERSION}_linux_arm64.tar.gz"
+                sha256 "${SHA_LINUX_ARM64}"
+              end
+              on_intel do
+                url "https://github.com/kint-pro/kint-vault-cli/releases/download/v${VERSION}/kint-vault-cli_${VERSION}_linux_amd64.tar.gz"
+                sha256 "${SHA_LINUX_AMD64}"
+              end
+            end
+
+            def install
+              bin.install "kint-vault"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/kint-vault --version", 0)
+            end
+          end
+          EOF
+          cat kint-vault.rb
+
+      - name: Push formula to tap
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          CONTENT=$(base64 -w0 kint-vault.rb)
+          SHA=$(curl -fsSL -H "Authorization: token $TAP_TOKEN" \
+            "https://api.github.com/repos/kint-pro/homebrew-tap/contents/Formula/kint-vault.rb" \
+            | jq -r '.sha')
+          curl -fsSL -X PUT \
+            -H "Authorization: token $TAP_TOKEN" \
+            -H "Content-Type: application/json" \
+            "https://api.github.com/repos/kint-pro/homebrew-tap/contents/Formula/kint-vault.rb" \
+            -d "{\"message\":\"Update kint-vault to ${VERSION}\",\"content\":\"${CONTENT}\",\"sha\":\"${SHA}\"}"

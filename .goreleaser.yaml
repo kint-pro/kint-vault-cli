@@ -32,13 +32,3 @@ release:
   github:
     owner: kint-pro
     name: kint-vault-cli
-
-homebrew_casks:
-  - name: kint-vault
-    binaries:
-      - kint-vault
-    description: "Secrets management CLI — encrypt .env files directly in your repo"
-    homepage: "https://github.com/kint-pro/kint-vault-cli"
-    repository:
-      owner: kint-pro
-      name: homebrew-tap
