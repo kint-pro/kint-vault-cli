@@ -33,15 +33,12 @@ release:
     owner: kint-pro
     name: kint-vault-cli
 
-brews:
-  - repository:
+homebrew_casks:
+  - name: kint-vault
+    binaries:
+      - kint-vault
+    description: "Secrets management CLI — encrypt .env files directly in your repo"
+    homepage: "https://github.com/kint-pro/kint-vault-cli"
+    repository:
       owner: kint-pro
       name: homebrew-tap
-    name: kint-vault
-    description: "Secrets management CLI — encrypt .env files directly in your repo"
-    license: "Apache-2.0"
-    homepage: "https://github.com/kint-pro/kint-vault-cli"
-    install: |
-      bin.install "kint-vault"
-    test: |
-      assert_match version.to_s, shell_output("#{bin}/kint-vault --version", 0)
