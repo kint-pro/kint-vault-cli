@@ -88,6 +88,13 @@ func reorderArgs(fs *flag.FlagSet, args []string) []string {
 func main() {
 	if len(os.Args) < 2 {
 		usage()
+		fmt.Fprintf(os.Stderr, `Tip: Create a short alias "kv" for kint-vault:
+
+  macOS/Linux (zsh):  echo 'alias kv="kint-vault"' >> ~/.zshrc && source ~/.zshrc
+  macOS/Linux (bash): echo 'alias kv="kint-vault"' >> ~/.bashrc && source ~/.bashrc
+  Windows (PS):       Set-Alias -Name kv -Value kint-vault -Scope Global
+
+`)
 		os.Exit(1)
 	}
 

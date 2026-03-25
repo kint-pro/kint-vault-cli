@@ -45,11 +45,15 @@ func pushSingle(cfg *config.Config, envFile string, yes bool) {
 		fatal(err.Error())
 	}
 
+	verb := "update"
 	if isNew {
+		verb = "add"
 		output.Ok(fmt.Sprintf("Created %s with %d secrets", encPath, len(secrets)))
 	} else {
 		output.Ok(fmt.Sprintf("Encrypted %d secrets → %s", len(secrets), encPath))
 	}
+	fmt.Printf("\n  git add %s\n", encPath)
+	fmt.Printf("  git commit -m \"%s %s secrets\"\n", verb, cfg.Env)
 }
 
 func CmdPush(envOverride, file string, yes, all bool) {

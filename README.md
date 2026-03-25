@@ -21,7 +21,13 @@ If this is a new project, see [Setup a project](#setup-a-project) below.
 
 ## Installation
 
-### macOS / Linux
+### Homebrew (macOS / Linux)
+
+```bash
+brew install kint-pro/tap/kint-vault
+```
+
+### macOS / Linux (script)
 
 ```bash
 curl -sfL https://raw.githubusercontent.com/kint-pro/kint-vault-cli/main/install.sh | sh
