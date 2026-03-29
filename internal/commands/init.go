@@ -13,13 +13,16 @@ import (
 )
 
 func CmdInit(env string, force bool) {
-	configPath := config.ConfigFile
-	if _, err := os.Stat(configPath); err == nil && !force {
-		fatal(fmt.Sprintf("%s already exists. Use --force to overwrite", configPath))
+	if err := doInit(env, force); err != nil {
+		fatal(err.Error())
 	}
+}
 
-	if env == "" {
-		env = prompt("Default environment", "dev")
+func doInit(env string, force bool) error {
+	configPath := config.ConfigFile
+	configExists := false
+	if _, err := os.Stat(configPath); err == nil {
+		configExists = true
 	}
 
 	keyFile := config.AgeKeyFile()
@@ -28,32 +31,58 @@ func CmdInit(env string, force bool) {
 		var err error
 		pubkey, err = config.ReadAgePubkey(keyFile)
 		if err != nil {
-			fatal(err.Error())
+			return err
 		}
 		output.Info("Using existing age key")
 	} else {
 		identity, err := age.GenerateX25519Identity()
 		if err != nil {
-			fatal(fmt.Sprintf("Failed to generate age key: %v", err))
+			return fmt.Errorf("failed to generate age key: %v", err)
 		}
 		pubkey = identity.Recipient().String()
 
 		dir := filepath.Dir(keyFile)
 		if err := os.MkdirAll(dir, 0o700); err != nil {
-			fatal(fmt.Sprintf("Failed to create key directory: %v", err))
+			return fmt.Errorf("failed to create key directory: %v", err)
 		}
 
 		keyContent := fmt.Sprintf("# created: by kint-vault\n# public key: %s\n%s\n",
 			pubkey, identity.String())
 		if err := os.WriteFile(keyFile, []byte(keyContent), 0o600); err != nil {
-			fatal(fmt.Sprintf("Failed to write key file: %v", err))
+			return fmt.Errorf("failed to write key file: %v", err)
 		}
 		config.RestrictFile(keyFile)
 		output.Ok("Generated age key")
 	}
 
+	if configExists && !force {
+		existing, err := config.LoadConfig("")
+		if err != nil {
+			return err
+		}
+		for _, r := range existing.Recipients {
+			if r == pubkey {
+				output.Info("Already initialized")
+				output.Info(fmt.Sprintf("Your public key: %s", pubkey))
+				return nil
+			}
+		}
+		existing.Recipients = append(existing.Recipients, pubkey)
+		if err := config.SaveConfig(existing); err != nil {
+			return err
+		}
+		output.Ok(fmt.Sprintf("Joined existing vault (env: %s)", existing.Env))
+		output.Info(fmt.Sprintf("Your public key: %s", pubkey))
+		output.Info("Ask a team member to run: kint-vault rotate")
+		return nil
+	}
+
+	if env == "" {
+		env = prompt("Default environment", "dev")
+	}
+
 	recipients := []string{pubkey}
-	if _, err := os.Stat(configPath); err == nil {
+	if configExists {
 		existing, err := config.LoadConfig("")
 		if err == nil && len(existing.Recipients) > 0 {
 			recipients = existing.Recipients
@@ -73,7 +102,7 @@ func CmdInit(env string, force bool) {
 	cfg := &config.Config{Env: env, Recipients: recipients}
 	data, _ := yaml.Marshal(cfg)
 	if err := os.WriteFile(configPath, data, 0o644); err != nil {
-		fatal(err.Error())
+		return err
 	}
 
 	gitignore := ".gitignore"
@@ -106,4 +135,5 @@ func CmdInit(env string, force bool) {
 	output.Ok(fmt.Sprintf("Initialized (env: %s)", env))
 	output.Info(fmt.Sprintf("Your public key: %s", pubkey))
 	output.Info("Share this key with your team to be added as recipient")
+	return nil
 }

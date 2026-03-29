@@ -1,6 +1,8 @@
-# CLAUDE.md
+# kint-vault-cli
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+@SOUL.md
+
+GitHub: kint-pro/kint-vault-cli
 
 ## Build & Test
 

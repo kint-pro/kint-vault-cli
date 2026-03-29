@@ -1,3 +1,6 @@
 .env
 /kint-vault
 /dist/
+kanban/
+SOUL.md
+.claude/
