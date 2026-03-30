@@ -43,6 +43,11 @@ func EncryptFile(cfg *config.Config, inputFile, directory string) error {
 	}
 	secrets := envfile.Parse(string(data))
 	enc := config.ResolveEnc(cfg, directory)
+
+	if existing, err := vault.DecryptForUpdate(enc); err == nil && existing != nil {
+		return vault.WriteEncryptedFileWithKey(enc, secrets, existing.DataKey, existing.Cipher)
+	}
+
 	return vault.WriteEncryptedFile(enc, secrets)
 }
 

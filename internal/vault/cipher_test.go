@@ -196,6 +196,83 @@ func TestStashPopulatedByDecrypt(t *testing.T) {
 	}
 }
 
+func TestReEncryptUnchangedProducesIdenticalOutput(t *testing.T) {
+	key := randomKey()
+
+	secrets := map[string]string{
+		"API_KEY":  "sk-12345",
+		"DB_HOST":  "localhost:5432",
+		"DB_PASS":  "p@$$w0rd!",
+		"EMPTY":    "",
+	}
+
+	c1 := NewCipher()
+	enc1, err := c1.encryptAll(secrets, key)
+	if err != nil {
+		t.Fatalf("first encryptAll: %v", err)
+	}
+
+	encrypted := make(map[string]string)
+	for _, line := range strings.Split(enc1, "\n") {
+		idx := strings.Index(line, "=")
+		encrypted[line[:idx]] = line[idx+1:]
+	}
+
+	c2 := NewCipher()
+	decrypted, err := c2.decryptAll(encrypted, key)
+	if err != nil {
+		t.Fatalf("decryptAll: %v", err)
+	}
+
+	enc2, err := c2.encryptAll(decrypted, key)
+	if err != nil {
+		t.Fatalf("re-encryptAll: %v", err)
+	}
+
+	if enc1 != enc2 {
+		t.Fatalf("re-encryption of unchanged secrets must produce identical output.\nfirst:\n%s\nsecond:\n%s", enc1, enc2)
+	}
+}
+
+func TestReEncryptChangedValueDiffers(t *testing.T) {
+	key := randomKey()
+
+	secrets := map[string]string{"A": "old", "B": "keep"}
+
+	c1 := NewCipher()
+	enc1, _ := c1.encryptAll(secrets, key)
+
+	encrypted := make(map[string]string)
+	for _, line := range strings.Split(enc1, "\n") {
+		idx := strings.Index(line, "=")
+		encrypted[line[:idx]] = line[idx+1:]
+	}
+
+	c2 := NewCipher()
+	decrypted, _ := c2.decryptAll(encrypted, key)
+	decrypted["A"] = "new"
+
+	enc2, _ := c2.encryptAll(decrypted, key)
+
+	lines1 := make(map[string]string)
+	for _, line := range strings.Split(enc1, "\n") {
+		idx := strings.Index(line, "=")
+		lines1[line[:idx]] = line[idx+1:]
+	}
+	lines2 := make(map[string]string)
+	for _, line := range strings.Split(enc2, "\n") {
+		idx := strings.Index(line, "=")
+		lines2[line[:idx]] = line[idx+1:]
+	}
+
+	if lines1["B"] != lines2["B"] {
+		t.Fatal("unchanged value B should produce identical ciphertext")
+	}
+	if lines1["A"] == lines2["A"] {
+		t.Fatal("changed value A should produce different ciphertext")
+	}
+}
+
 func TestEncryptAllDecryptAll(t *testing.T) {
 	key := randomKey()
 
