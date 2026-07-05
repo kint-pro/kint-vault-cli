@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/kint-pro/kint-vault-cli/actions/workflows/ci.yaml/badge.svg)](https://github.com/kint-pro/kint-vault-cli/actions/workflows/ci.yaml)
 [![Go](https://img.shields.io/github/go-mod/go-version/kint-pro/kint-vault-cli)](https://go.dev/)
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-proprietary-red.svg)](LICENSE)
 
 Unified secrets management CLI powered by [age](https://github.com/FiloSottile/age) encryption.
 
@@ -353,4 +353,4 @@ kv_version=1
 
 ## License
 
-Apache License 2.0 — see [LICENSE](LICENSE).
+Proprietary, all rights reserved by kint UG (haftungsbeschränkt) i.G. See [LICENSE](LICENSE). Versions up to v0.1.5 remain Apache-2.0.
