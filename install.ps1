@@ -10,7 +10,7 @@ $arch = if ([Environment]::Is64BitOperatingSystem) {
     Write-Error "Unsupported: 32-bit systems"; exit 1
 }
 
-$release = Invoke-RestMethod "https://api.github.com/repos/$repo/releases/latest"
+$release = Invoke-RestMethod "https://api.github.com/repos/$repo/releases/latest" -UseBasicParsing
 $version = $release.tag_name -replace "^v", ""
 $asset = "kint-vault-cli_${version}_windows_${arch}.zip"
 $url = $release.assets | Where-Object { $_.name -eq $asset } | Select-Object -ExpandProperty browser_download_url
@@ -19,7 +19,7 @@ if (-not $url) { Write-Error "No release found for windows/$arch"; exit 1 }
 
 $tmp = New-TemporaryFile | Rename-Item -NewName { $_.Name + ".zip" } -PassThru
 Write-Host "Downloading kint-vault v$version (windows/$arch)..."
-Invoke-WebRequest -Uri $url -OutFile $tmp
+Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing
 
 $extractDir = Join-Path $env:TEMP "kint-vault-install"
 if (Test-Path $extractDir) { Remove-Item $extractDir -Recurse -Force }
